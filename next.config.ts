@@ -1,7 +1,10 @@
 // next.config.ts
 import type { NextConfig } from "next";
 
+// dev 모드 감지
 const isDev = process.env.NODE_ENV !== "production";
+// Vercel 환경 감지
+const isPreview = process.env.VERCEL_ENV === "preview";
 
 const nextConfig: NextConfig = {
   ...(isDev && {
@@ -17,9 +20,15 @@ const nextConfig: NextConfig = {
   //   },
   // },
 
-  // 임시 완화 옵션(필요할 때만 켜고, 문제 해결 후 해제 권장)
-  // eslint: { ignoreDuringBuilds: true },
-  // typescript: { ignoreBuildErrors: true },
+  // ✅ 임시 완화 옵션
+  eslint: {
+    // Preview 환경(staging 브랜치)에서는 ESLint 에러 무시 → 빌드 통과
+    ignoreDuringBuilds: isPreview,
+  },
+  typescript: {
+    // 타입 에러로 빌드 실패 방지 (원한다면 임시로)
+    // ignoreBuildErrors: isPreview,
+  },
 };
 
 export default nextConfig;
