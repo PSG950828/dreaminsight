@@ -37,3 +37,4 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 빈 줄 추가 (재배포 트리거용)
 echo "" >> README.md// trigger
+# redeploy
