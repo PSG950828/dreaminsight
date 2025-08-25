@@ -36,4 +36,4 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
 빈 줄 추가 (재배포 트리거용)
-echo "" >> README.md
+echo "" >> README.md// trigger
