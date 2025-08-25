@@ -14,7 +14,6 @@ function needAuth(req: NextRequest) {
     hostname.endsWith(".staging.dreaminsight.co.kr");
 
   const protectAppPath = pathname.startsWith("/app");
-
   return isStagingHost || protectAppPath;
 }
 
@@ -22,19 +21,9 @@ function basicAuth(req: NextRequest) {
   const USER = process.env.BASIC_AUTH_USER ?? "";
   const PASS = process.env.BASIC_AUTH_PASS ?? "";
 
-  if (!USER || !PASS) {
-    const res = new NextResponse("Auth misconfigured (missing env)", {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": 'Basic realm="Secure Area", charset="UTF-8"',
-        "Cache-Control": "no-store",
-      },
-    });
-    res.headers.set("x-di-mw", "auth-misconfig");
-    return res;
-  }
-
   const header = req.headers.get("authorization");
+  let authState = "no-auth-header";
+
   if (header) {
     const [scheme, encoded] = header.split(" ");
     if (scheme === "Basic" && encoded) {
@@ -43,12 +32,18 @@ function basicAuth(req: NextRequest) {
         const idx = decoded.indexOf(":");
         const u = idx >= 0 ? decoded.slice(0, idx) : "";
         const p = idx >= 0 ? decoded.slice(idx + 1) : "";
-        if (u === USER && p === PASS) {
+        authState = u === USER && p === PASS ? "match" : "mismatch";
+        if (authState === "match") {
           const ok = NextResponse.next();
           ok.headers.set("x-di-mw", "auth-ok");
+          ok.headers.set("x-di-env-len", `${USER.length}:${PASS.length}`);
           return ok;
         }
-      } catch {}
+      } catch {
+        authState = "decode-failed";
+      }
+    } else {
+      authState = "bad-scheme";
     }
   }
 
@@ -59,22 +54,22 @@ function basicAuth(req: NextRequest) {
       "Cache-Control": "no-store",
     },
   });
-  res.headers.set("x-di-mw", "auth-challenge");
+  res.headers.set("x-di-mw", `auth-challenge:${authState}`);
+  // ⚠️ 값은 노출하지 않고 길이만 확인
+  res.headers.set(
+    "x-di-env-len",
+    `${(process.env.BASIC_AUTH_USER ?? "").length}:${(process.env.BASIC_AUTH_PASS ?? "").length}`
+  );
   return res;
 }
 
 export function middleware(req: NextRequest) {
-  let res: NextResponse;
-  if (needAuth(req)) {
-    res = basicAuth(req) as NextResponse;
-  } else {
-    res = NextResponse.next();
-    res.headers.set("x-di-mw", "bypass");
-  }
+  if (needAuth(req)) return basicAuth(req);
+  const res = NextResponse.next();
+  res.headers.set("x-di-mw", "bypass");
   return res;
 }
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
-// trigger
