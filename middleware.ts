@@ -63,6 +63,30 @@ function basicAuth(req: NextRequest) {
 }
 
 export function middleware(req: NextRequest) {
+  // Simple rate limiting for community write APIs (cookie-based, best-effort)
+  const url = req.nextUrl;
+  if (url.pathname.startsWith('/api/community/')) {
+    const now = Date.now();
+    const bucket = url.pathname.split('/')[3] || 'general'; // posts/comments/vote/report
+    const cookieKey = `di_rl_${bucket}`;
+    const raw = req.cookies.get(cookieKey)?.value || '';
+    let obj: { ts: number; c: number } = { ts: now, c: 0 };
+    try { obj = JSON.parse(raw); } catch {}
+
+    const windowMs = 60 * 1000; // 60s window
+    const limits: Record<string, number> = { posts: 3, comments: 10, vote: 30, report: 5, general: 10 };
+    const max = limits[bucket] ?? limits.general;
+    if (now - obj.ts > windowMs) { obj = { ts: now, c: 0 }; }
+    if (obj.c >= max && req.method !== 'GET') {
+      return new NextResponse('Too Many Requests', { status: 429, headers: { 'Retry-After': '60' } });
+    }
+    // allow and increment
+    if (req.method !== 'GET') obj.c += 1;
+    const res = needAuth(req) ? basicAuth(req) : NextResponse.next();
+    res.cookies.set(cookieKey, JSON.stringify(obj), { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 });
+    return res;
+  }
+
   return needAuth(req) ? basicAuth(req) : NextResponse.next();
 }
 

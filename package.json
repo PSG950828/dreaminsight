@@ -2,13 +2,25 @@
   "name": "dreaminsight",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "ai": "./scripts/ai.sh",
+    "di": "./scripts/di.js"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ai": "bash scripts/ai.sh",
+    "di": "node scripts/di.js",
+    "analyze": "TS_NODE_CACHE=false TS_NODE_TRANSPILE_ONLY=1 TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\",\"esModuleInterop\":true}' npx ts-node src/lib/analyze.ts",
+    "analyze:json": "TS_NODE_CACHE=false TS_NODE_TRANSPILE_ONLY=1 TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\",\"esModuleInterop\":true}' npx ts-node src/lib/analyze.ts --json",
+    "test:purple1": "npm run analyze:json -- \"보라불빛에서 ㅎㅎ 웃으며 달렸어\"",
+    "test:purple2": "npm run analyze:json -- \"자주색 라이트가 번쩍, 러닝하면서 하하 웃었어\""
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-switch": "^1.2.6",
@@ -25,15 +37,16 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@types/node": "^20.19.11",
+    "@types/react": "^19.1.11",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.21",
     "eslint": "^9",
     "eslint-config-next": "15.5.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.12",
+    "ts-node": "^10.9.2",
     "tw-animate-css": "^1.3.7",
-    "typescript": "^5"
+    "typescript": "^5.9.2"
   }
 }
