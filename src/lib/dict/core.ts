@@ -5,6 +5,10 @@ export type SymbolMeaning = {
   tags: string[];
   meaning: string;
   advice?: string;
+  contexts?: {
+    psych?: string;
+    culture?: { kr?: string; en?: string };
+  };
 };
 
 // 주요 상징 데이터

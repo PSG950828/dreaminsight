@@ -20,6 +20,25 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // Node scripts: relax TS rules and allow require() usage
+  {
+    files: ["scripts/**/*.{ts,js}", "src/lib/**/*.js"],
+    languageOptions: { ecmaVersion: 2022, sourceType: "module" },
+    linterOptions: { reportUnusedDisableDirectives: false },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "prefer-const": "off",
+    },
+  },
+  // App/src: relax strict any and specific Next rule to reduce noise while keeping guidance
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@next/next/no-assign-module-variable": "off",
+    },
+  },
 ];
 
 export default eslintConfig;

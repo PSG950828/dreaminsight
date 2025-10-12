@@ -1,0 +1,22 @@
+app:
+  - 'dev/dreaminsight/src/app/**'
+core:
+  - 'dev/dreaminsight/src/lib/**'
+ui:
+  - 'dev/dreaminsight/src/components/**'
+  - 'dev/dreaminsight/src/app/**/*.tsx'
+api:
+  - 'dev/dreaminsight/src/app/api/**'
+db:
+  - 'dev/dreaminsight/supabase/**'
+scripts:
+  - 'dev/dreaminsight/scripts/**'
+ci:
+  - 'dev/dreaminsight/.github/**'
+docs:
+  - 'dev/dreaminsight/**/*.md'
+config:
+  - 'dev/dreaminsight/**/*config*.{js,mjs,ts}'
+  - 'dev/dreaminsight/tsconfig*.json'
+  - 'dev/dreaminsight/postcss.config.mjs'
+

@@ -1,0 +1,56 @@
+name: Presets — Ops Smoke (Staging/Prod)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Target BASE_URL (staging/prod)'
+        required: true
+        type: string
+      preset:
+        description: 'Preset thresholds (staging|production)'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [ 'staging', 'production' ]
+      admin_password:
+        description: 'ADMIN_PASSWORD (optional)'
+        required: false
+        type: string
+      user_uid:
+        description: 'USER_UID for RL/CSRF test (optional)'
+        required: false
+        type: string
+      stripe_webhook_secret:
+        description: 'STRIPE_WEBHOOK_SECRET for webhook replay (optional)'
+        required: false
+        type: string
+
+jobs:
+  dispatch-ops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute thresholds
+        id: cfg
+        run: |
+          if [ "${{ inputs.preset }}" = "production" ]; then
+            echo "thr_unknown=0.15" >> $GITHUB_OUTPUT
+            echo "thr_fail=0.10" >> $GITHUB_OUTPUT
+          else
+            echo "thr_unknown=0.20" >> $GITHUB_OUTPUT
+            echo "thr_fail=0.12" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Dispatch Ops Smoke workflow
+        uses: peter-evans/workflow-dispatch@v2
+        with:
+          workflow: dev/dreaminsight/.github/workflows/ops-smoke.yml
+          ref: ${{ github.ref }}
+          inputs: |
+            base_url: "${{ inputs.base_url }}"
+            admin_password: "${{ inputs.admin_password }}"
+            user_uid: "${{ inputs.user_uid }}"
+            stripe_webhook_secret: "${{ inputs.stripe_webhook_secret }}"
+            unknown_rate_threshold: "${{ steps.cfg.outputs.thr_unknown }}"
+            upload_fail_rate_threshold: "${{ steps.cfg.outputs.thr_fail }}"
+

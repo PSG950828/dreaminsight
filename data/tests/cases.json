@@ -1,0 +1,81 @@
+[
+  {
+    "id": "t1",
+    "text": "검은 밤 높은 건물에서 떨어졌고 이가 부서졌어요. 파란 바다가 멀리 보였어요.",
+    "expectSymbols": ["falling","teeth"],
+    "notes": "추락/치아 + 파랑"
+  },
+  {
+    "id": "t2",
+    "text": "시험이 아니었고 말이 안 막히지 않았어.",
+    "forbidSymbols": ["exam","cannot_speak"],
+    "notes": "사후 부정으로 제외"
+  },
+  {
+    "id": "t3",
+    "text": "보라 불빛이 번쩍, 러닝하며 ㅎㅎ 웃었어",
+    "expectSymbols": [],
+    "notes": "보라/웃음/달리기 단서"
+  },
+  {
+    "id": "t4",
+    "text": "여권을 잃어버렸고 알람을 놓쳐 늦었어",
+    "expectSymbols": ["passport_lost","alarm_missed"],
+    "notes": "여권×알람 미스 규칙"
+  },
+  {
+    "id": "t5",
+    "text": "화면이 깨졌고 머리가 아팠다",
+    "expectSymbols": ["screen_cracked","headache"],
+    "notes": "디지털×건강 콤보"
+  },
+  {
+    "id": "t6",
+    "text": "지하철이 너무 붐비고 불안했어. 노란불이 깜빡",
+    "expectSymbols": ["subway_crowd"],
+    "notes": "지하철 혼잡×불안, 노란불"
+  },
+  {
+    "id": "t7",
+    "text": "시험 전에 아니라고 생각했지만 결국 보게 됨",
+    "notes": "사전 부정 약화(제외는 아님)"
+  },
+  {
+    "id": "t8",
+    "text": "창문이 깨지고 질투 장면이 떠올랐다",
+    "expectSymbols": ["window_broken","jealousy_scene"],
+    "notes": "프라이버시 규칙"
+  },
+  {
+    "id": "t9",
+    "text": "빨간불이 켜졌다가 초록불로 바뀌었다",
+    "notes": "색 단서"
+  },
+  {
+    "id": "t10",
+    "text": "집 문이 잠겼는데 열쇠를 잃어버렸다",
+    "expectSymbols": ["door_locked","key_lost"],
+    "notes": "접근 규칙"
+  }
+  ,
+  { "id": "t11", "text": "키가 자라 키가 컸다", "forbidSymbols": ["object_key2"], "notes": "키(height) ↔ 열쇠(key) 구분" },
+  { "id": "t12", "text": "열쇠고리를 잃어버렸지만 열쇠는 있었다", "forbidSymbols": ["key_lost"], "notes": "열쇠고리 오탐 방지" },
+  { "id": "t13", "text": "곰탕을 먹었다", "forbidSymbols": ["animal_wild"], "notes": "곰(동물) 오탐 방지" },
+  { "id": "t14", "text": "비밀번호를 잊어버렸다", "forbidSymbols": ["heavy_rain"], "notes": "비(비밀번호) 오탐 방지" },
+  { "id": "t15", "text": "문학을 공부했다", "forbidSymbols": ["domain_home","door_locked","object_key2"], "notes": "문(door) 오탐 방지" },
+  { "id": "t16", "text": "시험 삼아 해봤다", "forbidSymbols": ["exam"], "notes": "시험(try) 표현 오탐" },
+  { "id": "t17", "text": "안개가 자욱했다", "notes": "안개 심볼 감지" },
+  { "id": "t18", "text": "보랏빛 불빛이 방안을 채웠다", "notes": "보라색 단서 보강" },
+  { "id": "t19", "text": "아니라고 생각했지만 결국 시험을 보게 됐다", "expectSymbols": ["exam"], "notes": "사전 부정(약부정) — 제외 아님" },
+  { "id": "t20", "text": "시험을 보지 않았고 말도 막히지 않았다", "forbidSymbols": ["exam","cannot_speak"], "notes": "사후 부정(강부정) — 제외" },
+  { "id": "t21", "text": "창문이 깨졌고 질투 장면이 머릿속에 그려졌다", "expectSymbols": ["window_broken","jealousy_scene"], "notes": "프라이버시 규칙" },
+  { "id": "t22", "text": "교회당에서 기도를 드렸다", "notes": "교회(건물) 감지" },
+  { "id": "t23", "text": "빨간불이 켜지고 주황빛이 번졌다", "notes": "빨강/주황 색 단서" },
+  { "id": "t24", "text": "두려움이 엄습하고 검은 그림자 속에 있었다", "notes": "두려움/검정 근접 보강" },
+  { "id": "t25", "text": "지갑을 잃어버렸지만 알람은 제대로 울렸다", "expectSymbols": ["wallet_lost"], "forbidSymbols": ["alarm_missed"], "notes": "지갑×알람 미스 오탐 방지" },
+  { "id": "t26", "text": "폰이 꺼졌지만 여권은 챙겼다", "expectSymbols": ["phone_dead"], "forbidSymbols": ["passport_lost"], "notes": "여권×폰 방전 오탐 방지" },
+  { "id": "t27", "text": "초록빛 물결이 잔잔했다", "notes": "초록 색 단서" },
+  { "id": "t28", "text": "안개비가 내렸다", "notes": "안개+비 복합 — 안개 우선" },
+  { "id": "t29", "text": "노란불을 무시하지 말자", "notes": "노란불 색 단서" },
+  { "id": "t30", "text": "키캡을 잃어버렸다", "forbidSymbols": ["object_key2","key_lost"], "notes": "키(열쇠) 오탐 방지" }
+]

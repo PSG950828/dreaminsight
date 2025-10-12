@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     const d = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - i);
     dayLabels.push(d.toISOString().slice(0,10));
   }
-  const seriesByType: Record<string, Record<string, number[]>> = { symbol: {}, suggestion: {}, 'action.done': {} };
+  const seriesByType: Record<string, Record<string, number[]>> = { symbol: {}, suggestion: {}, 'action.done': {}, upload: {}, vote: {}, report: {}, parse: {} };
   // Checkout plan success series (rough conversion proxy)
   const checkoutSuccDay: number[] = Array(dayCount).fill(0);
   const checkoutSuccMonth: number[] = Array(dayCount).fill(0);
@@ -91,8 +91,8 @@ export async function GET(req: Request) {
     }
   }
   // Hourly distribution (0-23) for last N days (overall and by label for tops)
-  const hours: Record<string, number[]> = { symbol: Array(24).fill(0), suggestion: Array(24).fill(0), 'action.done': Array(24).fill(0) };
-  const hoursByLabel: Record<string, Record<string, number[]>> = { symbol: {}, suggestion: {}, 'action.done': {} };
+  const hours: Record<string, number[]> = { symbol: Array(24).fill(0), suggestion: Array(24).fill(0), 'action.done': Array(24).fill(0), upload: Array(24).fill(0), vote: Array(24).fill(0), report: Array(24).fill(0), parse: Array(24).fill(0) } as any;
+  const hoursByLabel: Record<string, Record<string, number[]>> = { symbol: {}, suggestion: {}, 'action.done': {}, upload: {}, vote: {}, report: {}, parse: {} } as any;
   const upsellHours = { open: Array(24).fill(0), subscribe: Array(24).fill(0) };
   const upsellHoursByCtx: Record<string, { open: number[]; subscribe: number[] }> = {};
   for (const ev of events || []) {
@@ -127,6 +127,18 @@ export async function GET(req: Request) {
     suggestions: top(agg['suggestion']),
     actions: top(agg['action.done'])
   };
+  // KPIs: unknown/suggestion/parse(noise) totals
+  const kpi_unknown = Object.values(agg['unknown'] || {}).reduce((a,b)=> a + (b||0), 0);
+  const kpi_suggestion = Object.values(agg['suggestion'] || {}).reduce((a,b)=> a + (b||0), 0);
+  const kpi_symbol = Object.values(agg['symbol'] || {}).reduce((a,b)=> a + (b||0), 0);
+  const kpi_noise = (agg['parse'] && typeof agg['parse']['noise'] === 'number') ? agg['parse']['noise'] : 0;
+  // Upload tops (success/fail.* 상세)
+  const uploadAgg = agg['upload'] || {};
+  const uploads = {
+    successes: top(Object.fromEntries(Object.entries(uploadAgg).filter(([k])=> k.startsWith('success')))),
+    fails: top(Object.fromEntries(Object.entries(uploadAgg).filter(([k])=> k.startsWith('fail.')))),
+    all: top(uploadAgg)
+  };
   // Encyclopedia tops
   const encOpens = Object.fromEntries(Object.entries(agg['enc'] || {}).filter(([k])=> k.startsWith('open.symbol.')));
   const encStarts = Object.fromEntries(Object.entries(agg['enc'] || {}).filter(([k])=> k.startsWith('click.start.')));
@@ -140,6 +152,14 @@ export async function GET(req: Request) {
     symbols: tops.symbols,
     suggestions: tops.suggestions,
     actions: tops.actions,
+    kpis: {
+      unknownTotal: kpi_unknown,
+      suggestionTotal: kpi_suggestion,
+      symbolTotal: kpi_symbol,
+      unknownRate: (kpi_unknown + kpi_symbol) > 0 ? Math.round((kpi_unknown / (kpi_unknown + kpi_symbol)) * 1000) / 10 : 0,
+      noiseTotal: kpi_noise,
+    },
+    uploads,
     checkout: {
       starts: top(Object.fromEntries(Object.entries(agg['checkout'] || {}).filter(([k])=> k.startsWith('start.')))),
       successes: top(Object.fromEntries(Object.entries(agg['checkout'] || {}).filter(([k])=> k.startsWith('success.')))),
@@ -161,6 +181,8 @@ export async function GET(req: Request) {
       symbols: pickSeries('symbol', tops.symbols),
       suggestions: pickSeries('suggestion', tops.suggestions),
       actions: pickSeries('action.done', tops.actions),
+      uploads: seriesByType['upload'] || {},
+      parse: seriesByType['parse'] || {},
       dayLabels,
       hours,
       hoursByLabel

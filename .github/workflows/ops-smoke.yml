@@ -1,0 +1,182 @@
+name: Ops Smoke — Staging Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Staging BASE_URL (e.g., https://staging.example.com)'
+        required: true
+        type: string
+      admin_password:
+        description: 'ADMIN_PASSWORD (optional, for admin endpoints)'
+        required: false
+        type: string
+      user_uid:
+        description: 'Test USER_UID/di_uid for RL/entitlement (default u_ops_<random>)'
+        required: false
+        type: string
+      stripe_webhook_secret:
+        description: 'STRIPE_WEBHOOK_SECRET (optional, to sign webhook replay)'
+        required: false
+        type: string
+      unknown_rate_threshold:
+        description: 'Alert threshold for unknownRate (0~1)'
+        required: false
+        default: '0.15'
+        type: string
+      upload_fail_rate_threshold:
+        description: 'Alert threshold for upload fail rate (0~1)'
+        required: false
+        default: '0.10'
+        type: string
+
+jobs:
+  smoke:
+    concurrency:
+      group: ops-smoke-${{ inputs.base_url }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dev/dreaminsight
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dev/dreaminsight/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Health & Backups
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          ADMIN_PASSWORD: ${{ inputs.admin_password || '' }}
+        run: |
+          npm run ops:health
+
+      - name: Rate-limit & CSRF
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          USER_UID: ${{ inputs.user_uid || format('u_ops_{0}', github.run_id) }}
+        run: |
+          npm run ops:rl-csrf
+
+      - name: Fetch KPIs (7d)
+        id: kpi
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          THR_UNKNOWN: ${{ inputs.unknown_rate_threshold || '0.15' }}
+          THR_FAIL: ${{ inputs.upload_fail_rate_threshold || '0.10' }}
+        run: |
+          set -e
+          J=$(curl -s "$BASE_URL/api/stats/kpi?days=7" || echo '{}')
+          UNK=$(echo "$J" | jq -r '.unknownRate // -1')
+          UNKT=$(echo "$J" | jq -r '.unknownTotal // 0')
+          UPS=$(echo "$J" | jq -r '.upload.ok // 0')
+          UPF=$(echo "$J" | jq -r '.upload.fail // 0')
+          FB=$(echo "$J" | jq -r '(.upload.failBreakdown // {}) | to_entries | sort_by(-.value) | .[0:2] | map("\(.key):\(.value)") | join(", ")')
+          FR=$(echo "$J" | jq -r '.upload.failRate // ""')
+          if [ -n "$FR" ] && [ "$FR" != "" ]; then FAILRATE="$FR"; else TOT=$((UPS+UPF)); if [ "$TOT" -gt 0 ]; then FAILRATE=$(python3 - <<PY
+tot=$TOT; upf=$UPF
+print(round(upf/tot,3))
+PY
+          ); else FAILRATE=-1; fi; fi
+          ALERT=0
+          awk -v t="$THR_UNKNOWN" "BEGIN{if($UNK>t) exit 0; exit 1}" >/dev/null 2>&1 && ALERT=1
+          if [ "$FAILRATE" != "-1" ]; then awk -v t="$THR_FAIL" "BEGIN{if($FAILRATE>t) exit 0; exit 1}" >/dev/null 2>&1 && ALERT=1; fi
+          TXT="unknownRate=$( [ "$UNK" = "-1" ] && echo N/A || echo $UNK ), unknown=$UNKT, upload ok=$UPS, fail=$UPF$( [ "$FAILRATE" = "-1" ] && echo '' || echo ", failRate=$FAILRATE" )$( [ -n "$FB" ] && echo ", failTop: $FB" )"
+          echo "kpi_text=$TXT" >> $GITHUB_OUTPUT
+          echo "kpi_alert=$ALERT" >> $GITHUB_OUTPUT
+      - name: Fetch Funnel (7d)
+        id: funnel
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          set -e
+          J=$(curl -s "$BASE_URL/api/stats/funnel?days=7" || echo '{}')
+          CCLICK=$(echo "$J" | jq -r '[.upsell.click[]?.count]|add // 0')
+          CSUCC=$(echo "$J" | jq -r '.checkout.success // 0')
+          RAT=$(python3 - <<PY
+clicks=${CCLICK}
+succ=${CSUCC}
+print(0 if clicks==0 else round(succ/clicks,3))
+PY
+          )
+          echo "funnel_click=$CCLICK" >> $GITHUB_OUTPUT
+          echo "funnel_success=$CSUCC" >> $GITHUB_OUTPUT
+          echo "funnel_rate=$RAT" >> $GITHUB_OUTPUT
+
+      - name: Stripe Webhook Replay (optional)
+        if: ${{ inputs.stripe_webhook_secret != '' }}
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          STRIPE_WEBHOOK_SECRET: ${{ inputs.stripe_webhook_secret }}
+        run: |
+          node -e "console.log('di_uid default:', process.env.DI_UID = '${{ inputs.user_uid || format('u_ops_{0}', github.run_id) }}')"
+          npm run ops:webhook:replay -- ${{ inputs.user_uid || format('u_ops_{0}', github.run_id) }} 30
+
+      - name: Notify Slack (optional)
+        if: ${{ always() && secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATUS="${{ job.status }}"
+          ICON="❌"; [ "$STATUS" = "success" ] && ICON="✅"
+          KPI_ICON=""; [ "${{ steps.kpi.outputs.kpi_alert }}" = "1" ] && KPI_ICON=" ⚠️"
+          TEXT="$ICON Ops Smoke — $STATUS\nBase: ${BASE_URL}\nKPI(7d)${KPI_ICON}: ${{ steps.kpi.outputs.kpi_text }}\nRun: ${RUN_URL}"
+          if [ -n "${{ steps.funnel.outputs.funnel_rate }}" ]; then
+            TEXT="$TEXT\nFunnel(7d): click=${{ steps.funnel.outputs.funnel_click }}, success=${{ steps.funnel.outputs.funnel_success }}, rate=${{ steps.funnel.outputs.funnel_rate }}"
+          fi
+          curl -s -X POST -H 'Content-type: application/json' --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" "$SLACK_WEBHOOK_URL"
+
+      - name: Notify Discord (optional)
+        if: ${{ always() && secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATUS="${{ job.status }}"
+          ICON="❌"; [ "$STATUS" = "success" ] && ICON="✅"
+          KPI_ICON=""; [ "${{ steps.kpi.outputs.kpi_alert }}" = "1" ] && KPI_ICON=" ⚠️"
+          CONTENT="$ICON Ops Smoke — $STATUS\nBase: ${BASE_URL}\nKPI(7d)${KPI_ICON}: ${{ steps.kpi.outputs.kpi_text }}\nRun: ${RUN_URL}"
+          if [ -n "${{ steps.funnel.outputs.funnel_rate }}" ]; then
+            CONTENT="$CONTENT\nFunnel(7d): click=${{ steps.funnel.outputs.funnel_click }}, success=${{ steps.funnel.outputs.funnel_success }}, rate=${{ steps.funnel.outputs.funnel_rate }}"
+          fi
+          curl -s -H "Content-Type: application/json" -d "$(jq -nc --arg content "$CONTENT" '{content:$content}')" "$DISCORD_WEBHOOK_URL"
+
+      - name: Create KPI Alert Issue (optional)
+        if: ${{ steps.kpi.outputs.kpi_alert == '1' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `KPI Alert after Ops Smoke: ${process.env.GITHUB_RUN_ID}`;
+            const body = [
+              `Base: ${{ inputs.base_url }}`,
+              `KPI(7d): ${{ steps.kpi.outputs.kpi_text }}`,
+              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            ].join('\n');
+            const labels = ['ops','incident'];
+            await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body, labels });
+
+      - name: Notify Generic Webhook (optional)
+        if: ${{ always() && secrets.RELEASE_WEBHOOK_URL != '' }}
+        env:
+          RELEASE_WEBHOOK_URL: ${{ secrets.RELEASE_WEBHOOK_URL }}
+        run: |
+          jq -nc \
+            --arg repo "${{ github.repository }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg status "${{ job.status }}" \
+            --arg base "${{ inputs.base_url }}" \
+            --arg url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{event:"ops-smoke", repo:$repo, run_id:$run_id, status:$status, base:$base, url:$url, ts:(now|toiso8601)}' \
+            | curl -s -H 'Content-Type: application/json' -d @- "$RELEASE_WEBHOOK_URL"

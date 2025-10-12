@@ -64,6 +64,14 @@ export default function EncyclopediaPage() {
   const categoryList = useMemo(()=> Object.entries(categories).sort((a,b)=> b[1]-a[1]).slice(0, 20), [categories]);
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize));
   useEffect(()=>{ if (page > totalPages) setPage(1); }, [count, pageSize]);
+  const gapCategories = useMemo(()=> {
+    const entries = Object.entries(categories||{});
+    if (!entries.length) return [] as Array<[string, number]>;
+    const counts = entries.map(([,n])=> n).sort((a,b)=> a-b);
+    const median = counts[Math.floor(counts.length/2)] || 0;
+    const threshold = Math.max(3, Math.min(10, median));
+    return entries.filter(([,n])=> n < threshold).sort((a,b)=> a[1]-b[1]).slice(0, 6);
+  }, [categories]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 text-zinc-900 dark:text-zinc-50">
@@ -98,6 +106,29 @@ export default function EncyclopediaPage() {
             <button key={`chip-c-${c}`} className={`px-2 py-1 rounded-full border text-xs ${category===c? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : ''}`} onClick={()=>{ setCategory(category===c? '' : c); setPage(1); load(); }}>{c}</button>
           ))}
         </div>
+
+        {/* Category insights */}
+        <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+          <CardHeader className="pb-2"><CardTitle className="text-lg">카테고리 분포/보강 제안</CardTitle></CardHeader>
+          <CardContent className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <div className="opacity-70 mb-1 text-xs">분포 TOP</div>
+              <div className="space-y-1">
+                {categoryList.slice(0,6).map(([c,n])=> (
+                  <div key={`topc-${c}`} className="flex items-center justify-between"><span>{c}</span><span className="opacity-70">{n}</span></div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="opacity-70 mb-1 text-xs">보강 추천(낮은 카운트)</div>
+              <div className="space-y-1">
+                {gapCategories.length ? gapCategories.map(([c,n])=> (
+                  <div key={`gapc-${c}`} className="flex items-center justify-between"><span>{c}</span><span className="opacity-70">{n}</span></div>
+                )) : <div className="opacity-60 text-xs">추천 없음</div>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid gap-2 sm:grid-cols-2">
           {items.length === 0 ? (

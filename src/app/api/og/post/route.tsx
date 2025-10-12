@@ -38,6 +38,7 @@ export async function GET(req: Request) {
   const subtitle = `${anon} · ${createdAt}`;
   const width = 1200;
   const height = 630;
+  const cta = '내 꿈 해석해보기 → dreaminsight';
 
   return new ImageResponse(
     (
@@ -66,9 +67,9 @@ export async function GET(req: Request) {
             ))}
           </div>
         ) : null}
+        <div style={{ marginTop: 16, opacity: 0.95, fontSize: 22 }}>{cta}</div>
       </div>
     ),
     { width, height }
   );
 }
-

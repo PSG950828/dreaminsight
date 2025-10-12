@@ -1,0 +1,61 @@
+name: "Bug Report"
+description: "문제 재현 절차와 기대/실제 결과를 포함해 버그를 보고합니다."
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 요약
+      description: 한 줄 요약(무슨 문제가 발생했나요?)
+      placeholder: 예) 커뮤니티 이미지 업로드 1.5MB 이하에서도 400이 반환됨
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      description: 스테이징/프로덕션/로컬, 브라우저/OS/버전
+      placeholder: Staging, Chrome 128 / macOS 14.6
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 절차
+      description: 재현 가능한 최소 단계로 작성해주세요
+      placeholder: |
+        1. ... 페이지 접속
+        2. ... 버튼 클릭
+        3. ... 파일 업로드
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 결과
+      placeholder: 예) 200 OK와 이미지 썸네일 노출
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 결과
+      placeholder: 예) 400 mime_mismatch 응답
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그/콘솔/응답 본문
+      render: bash
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: 회귀 여부
+      options:
+        - label: 이전에 정상 동작했다가 최근에 깨졌습니다
+  - type: checkboxes
+    id: security
+    attributes:
+      label: 보안/프라이버시 영향
+      options:
+        - label: 민감 정보 노출 가능성이 있습니다
+

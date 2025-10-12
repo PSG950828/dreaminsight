@@ -1,0 +1,196 @@
+name: Vercel Env Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Vercel env target (development|preview|production)'
+        required: false
+        type: choice
+        options: [ 'development', 'preview', 'production' ]
+      preset:
+        description: 'Preset (staging→preview, production→production)'
+        required: false
+        type: choice
+        options: [ 'staging', 'production' ]
+      apply_defaults:
+        description: 'Apply recommended defaults when a value is missing (true|false)'
+        required: false
+        default: 'false'
+        type: choice
+        options: [ 'true', 'false' ]
+      enforce_preset_defaults:
+        description: 'Force preset defaults overriding values (true|false)'
+        required: false
+        default: 'false'
+        type: choice
+        options: [ 'true', 'false' ]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Compute target
+        id: cfg
+        run: |
+          tgt='${{ inputs.environment }}'
+          if [ -z "$tgt" ]; then
+            case "${{ inputs.preset }}" in
+              staging) tgt='preview' ;;
+              production) tgt='production' ;;
+            esac
+          fi
+          [ -z "$tgt" ] && tgt='production'
+          echo "env=$tgt" >> $GITHUB_OUTPUT
+
+      - name: Push core env (safe subset)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BUCKET_COMMUNITY: ${{ vars.SUPABASE_BUCKET_COMMUNITY || 'community' }}
+          ENABLE_CSRF: ${{ vars.ENABLE_CSRF || 'true' }}
+          CSRF_ORIGIN_ALLOW: ${{ vars.CSRF_ORIGIN_ALLOW || '' }}
+          APPLY_DEFAULTS: ${{ inputs.apply_defaults }}
+        run: |
+          set -e
+          tgt='${{ steps.cfg.outputs.env }}'
+          
+          push_var () {
+            key="$1"; val="$2"
+            [ -z "$val" ] && echo "skip $key (empty)" && return 0
+            printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN || vercel env rm "$key" "$tgt" --yes --token=$VERCEL_TOKEN && printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN
+          }
+          # Defaults when applying
+          if [ "$APPLY_DEFAULTS" = "true" ]; then
+            [ -z "$ENABLE_CSRF" ] && ENABLE_CSRF="true"
+            [ -z "$SUPABASE_BUCKET_COMMUNITY" ] && SUPABASE_BUCKET_COMMUNITY="community"
+          fi
+          
+          push_var NEXT_PUBLIC_SUPABASE_URL "$NEXT_PUBLIC_SUPABASE_URL"
+          push_var NEXT_PUBLIC_SUPABASE_ANON_KEY "$NEXT_PUBLIC_SUPABASE_ANON_KEY"
+          push_var SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
+          push_var SUPABASE_BUCKET_COMMUNITY "$SUPABASE_BUCKET_COMMUNITY"
+          push_var ENABLE_CSRF "$ENABLE_CSRF"
+          push_var CSRF_ORIGIN_ALLOW "$CSRF_ORIGIN_ALLOW"
+
+      - name: Push rate limit env (optional)
+        env:
+          DI_RL_WINDOW_SEC: ${{ vars.DI_RL_WINDOW_SEC }}
+          DI_RL_POSTS: ${{ vars.DI_RL_POSTS }}
+          DI_RL_COMMENTS: ${{ vars.DI_RL_COMMENTS }}
+          DI_RL_VOTE: ${{ vars.DI_RL_VOTE }}
+          DI_RL_REPORT: ${{ vars.DI_RL_REPORT }}
+          DI_RL_UPLOAD: ${{ vars.DI_RL_UPLOAD }}
+          APPLY_DEFAULTS: ${{ inputs.apply_defaults }}
+          ENFORCE_PRESET: ${{ inputs.enforce_preset_defaults }}
+          PRESET: ${{ inputs.preset }}
+        run: |
+          set -e
+          tgt='${{ steps.cfg.outputs.env }}'
+          push_var () {
+            key="$1"; val="$2"; [ -z "$val" ] && return 0
+            printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN || vercel env rm "$key" "$tgt" --yes --token=$VERCEL_TOKEN && printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN
+          }
+          if [ "$APPLY_DEFAULTS" = "true" ]; then
+            [ -z "$DI_RL_WINDOW_SEC" ] && DI_RL_WINDOW_SEC="60"
+            [ -z "$DI_RL_POSTS" ] && DI_RL_POSTS="3"
+            [ -z "$DI_RL_COMMENTS" ] && DI_RL_COMMENTS="10"
+            [ -z "$DI_RL_VOTE" ] && DI_RL_VOTE="30"
+            [ -z "$DI_RL_REPORT" ] && DI_RL_REPORT="5"
+            [ -z "$DI_RL_UPLOAD" ] && DI_RL_UPLOAD="10"
+          fi
+          if [ "$ENFORCE_PRESET" = "true" ]; then
+            case "$PRESET" in
+              staging)
+                DI_RL_WINDOW_SEC="60"; DI_RL_POSTS="5"; DI_RL_COMMENTS="12"; DI_RL_VOTE="40"; DI_RL_REPORT="6"; DI_RL_UPLOAD="12" ;;
+              production)
+                DI_RL_WINDOW_SEC="60"; DI_RL_POSTS="3"; DI_RL_COMMENTS="10"; DI_RL_VOTE="30"; DI_RL_REPORT="5"; DI_RL_UPLOAD="10" ;;
+            esac
+          fi
+          push_var DI_RL_WINDOW_SEC "$DI_RL_WINDOW_SEC"
+          push_var DI_RL_POSTS "$DI_RL_POSTS"
+          push_var DI_RL_COMMENTS "$DI_RL_COMMENTS"
+          push_var DI_RL_VOTE "$DI_RL_VOTE"
+          push_var DI_RL_REPORT "$DI_RL_REPORT"
+          push_var DI_RL_UPLOAD "$DI_RL_UPLOAD"
+
+      - name: Push payment/stripe env (optional)
+        env:
+          NEXT_PUBLIC_PAYMENT_LINK_URL: ${{ secrets.NEXT_PUBLIC_PAYMENT_LINK_URL }}
+          NEXT_PUBLIC_PAYMENT_LINK_URL_A: ${{ secrets.NEXT_PUBLIC_PAYMENT_LINK_URL_A }}
+          NEXT_PUBLIC_PAYMENT_LINK_URL_B: ${{ secrets.NEXT_PUBLIC_PAYMENT_LINK_URL_B }}
+          STRIPE_PAYMENT_LINK: ${{ secrets.STRIPE_PAYMENT_LINK }}
+          STRIPE_PAYMENT_LINK_PLUS: ${{ secrets.STRIPE_PAYMENT_LINK_PLUS }}
+          STRIPE_PAYMENT_LINK_PRO: ${{ secrets.STRIPE_PAYMENT_LINK_PRO }}
+          STRIPE_PAYMENT_LINK_DAY: ${{ secrets.STRIPE_PAYMENT_LINK_DAY }}
+          STRIPE_PAYMENT_LINK_WEEK: ${{ secrets.STRIPE_PAYMENT_LINK_WEEK }}
+          STRIPE_PAYMENT_LINK_MONTH: ${{ secrets.STRIPE_PAYMENT_LINK_MONTH }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+        run: |
+          set -e
+          tgt='${{ steps.cfg.outputs.env }}'
+          push_var () { key="$1"; val="$2"; [ -z "$val" ] && return 0; printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN || vercel env rm "$key" "$tgt" --yes --token=$VERCEL_TOKEN && printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN; }
+          push_var NEXT_PUBLIC_PAYMENT_LINK_URL "$NEXT_PUBLIC_PAYMENT_LINK_URL"
+          push_var NEXT_PUBLIC_PAYMENT_LINK_URL_A "$NEXT_PUBLIC_PAYMENT_LINK_URL_A"
+          push_var NEXT_PUBLIC_PAYMENT_LINK_URL_B "$NEXT_PUBLIC_PAYMENT_LINK_URL_B"
+          push_var STRIPE_PAYMENT_LINK "$STRIPE_PAYMENT_LINK"
+          push_var STRIPE_PAYMENT_LINK_PLUS "$STRIPE_PAYMENT_LINK_PLUS"
+          push_var STRIPE_PAYMENT_LINK_PRO "$STRIPE_PAYMENT_LINK_PRO"
+          push_var STRIPE_PAYMENT_LINK_DAY "$STRIPE_PAYMENT_LINK_DAY"
+          push_var STRIPE_PAYMENT_LINK_WEEK "$STRIPE_PAYMENT_LINK_WEEK"
+          push_var STRIPE_PAYMENT_LINK_MONTH "$STRIPE_PAYMENT_LINK_MONTH"
+          push_var STRIPE_WEBHOOK_SECRET "$STRIPE_WEBHOOK_SECRET"
+
+      - name: Push admin/quota env (optional)
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ENABLE_AUTH: ${{ vars.ENABLE_AUTH || 'false' }}
+          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
+          BASIC_AUTH_PASS: ${{ secrets.BASIC_AUTH_PASS }}
+          NEXT_PUBLIC_DAILY_QUOTA_ANALYZE: ${{ vars.NEXT_PUBLIC_DAILY_QUOTA_ANALYZE }}
+          DAILY_QUOTA_POSTS: ${{ vars.DAILY_QUOTA_POSTS }}
+          DAILY_QUOTA_UPLOADS: ${{ vars.DAILY_QUOTA_UPLOADS }}
+          DAILY_QUOTA_COMMENTS: ${{ vars.DAILY_QUOTA_COMMENTS }}
+          DAILY_QUOTA_REPORTS: ${{ vars.DAILY_QUOTA_REPORTS }}
+          APPLY_DEFAULTS: ${{ inputs.apply_defaults }}
+          ENFORCE_PRESET: ${{ inputs.enforce_preset_defaults }}
+          PRESET: ${{ inputs.preset }}
+        run: |
+          set -e
+          tgt='${{ steps.cfg.outputs.env }}'
+          push_var () { key="$1"; val="$2"; [ -z "$val" ] && return 0; printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN || vercel env rm "$key" "$tgt" --yes --token=$VERCEL_TOKEN && printf "%s" "$val" | vercel env add "$key" "$tgt" --token=$VERCEL_TOKEN; }
+          if [ "$APPLY_DEFAULTS" = "true" ]; then
+            [ -z "$NEXT_PUBLIC_DAILY_QUOTA_ANALYZE" ] && NEXT_PUBLIC_DAILY_QUOTA_ANALYZE="3"
+            [ -z "$DAILY_QUOTA_POSTS" ] && DAILY_QUOTA_POSTS="3"
+            [ -z "$DAILY_QUOTA_UPLOADS" ] && DAILY_QUOTA_UPLOADS="10"
+            [ -z "$DAILY_QUOTA_COMMENTS" ] && DAILY_QUOTA_COMMENTS="10"
+            [ -z "$DAILY_QUOTA_REPORTS" ] && DAILY_QUOTA_REPORTS="10"
+          fi
+          if [ "$ENFORCE_PRESET" = "true" ]; then
+            case "$PRESET" in
+              staging)
+                NEXT_PUBLIC_DAILY_QUOTA_ANALYZE="3"; DAILY_QUOTA_POSTS="2"; DAILY_QUOTA_UPLOADS="6"; DAILY_QUOTA_COMMENTS="6"; DAILY_QUOTA_REPORTS="6" ;;
+              production)
+                NEXT_PUBLIC_DAILY_QUOTA_ANALYZE="3"; DAILY_QUOTA_POSTS="3"; DAILY_QUOTA_UPLOADS="10"; DAILY_QUOTA_COMMENTS="10"; DAILY_QUOTA_REPORTS="10" ;;
+            esac
+          fi
+          push_var ADMIN_PASSWORD "$ADMIN_PASSWORD"
+          push_var ENABLE_AUTH "$ENABLE_AUTH"
+          push_var BASIC_AUTH_USER "$BASIC_AUTH_USER"
+          push_var BASIC_AUTH_PASS "$BASIC_AUTH_PASS"
+          push_var NEXT_PUBLIC_DAILY_QUOTA_ANALYZE "$NEXT_PUBLIC_DAILY_QUOTA_ANALYZE"
+          push_var DAILY_QUOTA_POSTS "$DAILY_QUOTA_POSTS"
+          push_var DAILY_QUOTA_UPLOADS "$DAILY_QUOTA_UPLOADS"
+          push_var DAILY_QUOTA_COMMENTS "$DAILY_QUOTA_COMMENTS"
+          push_var DAILY_QUOTA_REPORTS "$DAILY_QUOTA_REPORTS"

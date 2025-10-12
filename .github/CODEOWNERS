@@ -1,0 +1,24 @@
+# CODEOWNERS
+# Replace placeholder handles with your GitHub usernames/teams
+
+# App shell & pages
+dev/dreaminsight/src/app/** @your-org/frontend
+
+# Core analyzer & libs
+dev/dreaminsight/src/lib/** @your-org/core
+
+# UI components
+dev/dreaminsight/src/components/** @your-org/frontend
+
+# API routes
+dev/dreaminsight/src/app/api/** @your-org/backend
+
+# Supabase schema
+dev/dreaminsight/supabase/** @your-org/backend
+
+# CI/CD & Ops
+dev/dreaminsight/.github/** @your-org/ops
+
+# Docs
+dev/dreaminsight/**/*.md @your-org/ops
+

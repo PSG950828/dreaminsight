@@ -1,0 +1,43 @@
+name: "Incident Report"
+description: "장애/이상 징후 발생 시 보고 및 사후분석 템플릿"
+labels: [incident]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 요약
+      placeholder: 무엇이, 언제, 얼마나 영향을 주었는지 한 줄 요약
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향 범위/정도
+      placeholder: 사용자/트래픽/기능 영향(정량/정성)
+  - type: textarea
+    id: timeline
+    attributes:
+      label: 타임라인
+      placeholder: 발생/탐지/대응/복구 시각(UTC)
+  - type: textarea
+    id: detection
+    attributes:
+      label: 탐지 방법/신호
+      placeholder: 알림/지표/로그(ops-smoke KPI 포함)
+  - type: textarea
+    id: rootcause
+    attributes:
+      label: 근본 원인(RCA)
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: 즉시 완화/복구 조치
+  - type: textarea
+    id: prevention
+    attributes:
+      label: 재발 방지 액션(추적)
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 참고(로그/스크린샷/링크)
+

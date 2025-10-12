@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -35,7 +36,36 @@ export default function RootLayout({
         />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
+        {/* Global Glass Header */}
+        <div className="sticky top-0 z-50 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link href="/" className="font-semibold tracking-tight">DreamInsight</Link>
+              <nav className="hidden sm:flex items-center gap-4 text-sm subtle-muted">
+                <Link href="/community" className="hover:opacity-100">커뮤니티</Link>
+                <Link href="/encyclopedia" className="hover:opacity-100">백과</Link>
+                <Link href="/about/terms" className="hover:opacity-100">이용약관</Link>
+              </nav>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <Link href="/checkout" className="px-3 py-1.5 rounded-md border hover-elev">Plus</Link>
+            </div>
+          </div>
+        </div>
+
+        <main>{children}</main>
+
+        {/* Global Footer */}
+        <footer className="mt-12 border-t border-zinc-200/60 dark:border-zinc-800/60 py-6">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-xs subtle-muted flex flex-col sm:flex-row items-center gap-2 sm:justify-between">
+            <div>© {new Date().getFullYear()} DreamInsight</div>
+            <div className="flex items-center gap-3">
+              <Link href="/about/privacy" className="hover:opacity-100">개인정보처리방침</Link>
+              <Link href="/about/refund" className="hover:opacity-100">환불정책</Link>
+              <Link href="/about/terms" className="hover:opacity-100">이용약관</Link>
+            </div>
+          </div>
+        </footer>
       </body>
     </html>
   );

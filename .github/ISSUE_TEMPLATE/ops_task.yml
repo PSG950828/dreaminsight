@@ -1,0 +1,46 @@
+name: "Ops Task / Runbook"
+description: "운영 점검/튜닝/장애 대응을 위한 작업 항목 입니다."
+labels: [ops]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목표
+      placeholder: 예) RL 튜닝으로 신고 스파이크 억제, 업로드 실패율 모니터링 강화
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: Staging / Production
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 체크리스트
+      options:
+        - label: /api/admin/health OK
+        - label: /api/community/storage/health OK
+        - label: ops:rl-csrf 실행(요약 첨부)
+        - label: ops:webhook:replay (선택)
+        - label: 백업(API) 실행 및 목록 확인
+  - type: textarea
+    id: tuning
+    attributes:
+      label: 튜닝/설정 변경
+      placeholder: DI_RL_* / DAILY_QUOTA_* / CSRF_ORIGIN_ALLOW 변경사항
+  - type: textarea
+    id: runbook
+    attributes:
+      label: 런북 반영
+      placeholder: OPERATIONS_CHECKLIST.md/PRODUCTION_PROFILE.md 반영 사항
+  - type: textarea
+    id: rollback
+    attributes:
+      label: 롤백/완화 플랜
+  - type: textarea
+    id: result
+    attributes:
+      label: 결과/지표
+      placeholder: /stats 관련 카드/시계열/비율 변화 요약
+

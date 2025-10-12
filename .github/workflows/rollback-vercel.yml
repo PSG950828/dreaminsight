@@ -1,0 +1,55 @@
+name: Rollback — Vercel Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_url:
+        description: 'Previous deployment URL to promote to production (e.g., https://di-abc123.vercel.app)'
+        required: true
+        type: string
+      notify:
+        description: 'Send Slack/Discord notifications (true|false)'
+        required: false
+        default: 'true'
+        type: choice
+        options: [ 'true', 'false' ]
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Promote previous deployment to production
+        id: promote
+        run: |
+          url='${{ inputs.deployment_url }}'
+          if [ -z "$url" ]; then echo 'Missing deployment_url'; exit 1; fi
+          # Promote to production
+          vercel promote "$url" --prod --token=${{ env.VERCEL_TOKEN }}
+          echo "url=$url" >> $GITHUB_OUTPUT
+
+      - name: Notify Slack (optional)
+        if: ${{ inputs.notify == 'true' && success() && secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          TEXT="↩️ Rollback promoted: ${{ steps.promote.outputs.url }}"
+          curl -s -X POST -H 'Content-type: application/json' --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" "$SLACK_WEBHOOK_URL"
+
+      - name: Notify Discord (optional)
+        if: ${{ inputs.notify == 'true' && success() && secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          CONTENT="↩️ Rollback promoted: ${{ steps.promote.outputs.url }}"
+          curl -s -H "Content-Type: application/json" -d "$(jq -nc --arg content "$CONTENT" '{content:$content}')" "$DISCORD_WEBHOOK_URL"
+

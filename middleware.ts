@@ -62,19 +62,63 @@ function basicAuth(req: NextRequest) {
   });
 }
 
+function ipOrUA(req: NextRequest): string {
+  try {
+    const h = req.headers;
+    return (
+      h.get('cf-connecting-ip') ||
+      h.get('x-forwarded-for') ||
+      (req as unknown as { ip?: string }).ip ||
+      h.get('x-real-ip') ||
+      h.get('user-agent') ||
+      'anon'
+    );
+  } catch { return 'anon'; }
+}
+
 export function middleware(req: NextRequest) {
+  // Capture referral parameters (utm_*) into a cookie for 30 days (best-effort)
+  try {
+    const url = req.nextUrl;
+    const sp = url.searchParams;
+    const src = sp.get('utm_source') || sp.get('ref');
+    const med = sp.get('utm_medium') || '';
+    const camp = sp.get('utm_campaign') || '';
+    if (src) {
+      const ref = `${src}:${med}:${camp}`.replace(/\s+/g,'_').slice(0,80);
+      const res = NextResponse.next();
+      res.cookies.set('di_ref', ref, { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 30*24*60*60 });
+      return res;
+    }
+  } catch {}
   // Simple rate limiting for community write APIs (cookie-based, best-effort)
   const url = req.nextUrl;
   if (url.pathname.startsWith('/api/community/')) {
     const now = Date.now();
     const bucket = url.pathname.split('/')[3] || 'general'; // posts/comments/vote/report
-    const cookieKey = `di_rl_${bucket}`;
+    const uid = req.cookies.get('di_uid')?.value || '';
+    const ipSig = ipOrUA(req).split(',')[0].trim().slice(-16).replace(/[^a-zA-Z0-9:_-]/g,'');
+    const keySuffix = uid ? `u_${uid.slice(-8)}` : `i_${ipSig || 'anon'}`;
+    const cookieKey = `di_rl_${bucket}_${keySuffix}`;
     const raw = req.cookies.get(cookieKey)?.value || '';
     let obj: { ts: number; c: number } = { ts: now, c: 0 };
     try { obj = JSON.parse(raw); } catch {}
 
-    const windowMs = 60 * 1000; // 60s window
-    const limits: Record<string, number> = { posts: 3, comments: 10, vote: 30, report: 5, general: 10 };
+    // Tunables via env: DI_RL_WINDOW_SEC (4..300), DI_RL_POSTS, DI_RL_COMMENTS, DI_RL_VOTE, DI_RL_REPORT, DI_RL_UPLOAD
+    const secRaw = parseInt(String(process.env.DI_RL_WINDOW_SEC || ''), 10);
+    const windowMs = (Number.isFinite(secRaw) && secRaw >= 4 && secRaw <= 300 ? secRaw : 60) * 1000; // default 60s
+    const num = (v: string|undefined, d: number) => {
+      const n = parseInt(String(v||''), 10);
+      return Number.isFinite(n) && n >= 0 && n <= 200 ? n : d;
+    };
+    const limits: Record<string, number> = {
+      posts: num(process.env.DI_RL_POSTS, 3),
+      comments: num(process.env.DI_RL_COMMENTS, 10),
+      vote: num(process.env.DI_RL_VOTE, 30),
+      report: num(process.env.DI_RL_REPORT, 5),
+      upload: num(process.env.DI_RL_UPLOAD, 10),
+      general: 10,
+    };
     const max = limits[bucket] ?? limits.general;
     if (now - obj.ts > windowMs) { obj = { ts: now, c: 0 }; }
     if (obj.c >= max && req.method !== 'GET') {

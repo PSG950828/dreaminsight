@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 운영 가이드 / 체크리스트
+    url: https://github.com/<org>/<repo>/blob/main/dev/dreaminsight/OPERATIONS_CHECKLIST.md
+    about: 운영 절차/장애 대응 가이드를 참고하세요.
+  - name: 프로덕션 프로파일
+    url: https://github.com/<org>/<repo>/blob/main/dev/dreaminsight/PRODUCTION_PROFILE.md
+    about: 운영 권장 설정/환경변수 가이드를 참고하세요.
+

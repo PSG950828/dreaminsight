@@ -1,0 +1,115 @@
+name: Regression Eval
+
+on:
+  push:
+    paths:
+      - 'dev/dreaminsight/**'
+  pull_request:
+    paths:
+      - 'dev/dreaminsight/**'
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dev/dreaminsight
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: dev/dreaminsight/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate synthetic cases
+        run: npm run -s gen:cases
+
+      - name: Typecheck (optional)
+        run: npm run -s typecheck || true
+
+      - name: Run regression (CSV)
+        run: npm run -s eval:regression > regression.csv
+
+      - name: Generate HTML report
+        run: npm run -s eval:report
+
+      - name: Check alias collisions
+        run: npm run -s check:aliases > alias_report.txt || true
+
+      - name: Generate alias suggestions
+        run: npm run -s alias:suggest
+
+      - name: Enforce thresholds
+        env:
+          DI_MAX_UNKNOWN_RATE: "15"   # percent
+          DI_MAX_FAILS: "0"
+        run: |
+          node -e '
+            const fs=require("fs");
+            const s=JSON.parse(fs.readFileSync("reports/summary.json","utf8"));
+            const maxU=Number(process.env.DI_MAX_UNKNOWN_RATE||"15");
+            const maxF=Number(process.env.DI_MAX_FAILS||"0");
+            const u=Number(s.unknownRate||0);
+            const f=Number(s.fail||0);
+            console.log(`Thresholds: unknownRate<=${maxU}%, fails<=${maxF}`);
+            console.log(`Observed: unknownRate=${u}%, fails=${f}`);
+            if (u>maxU || f>maxF) { console.error("Regression thresholds exceeded"); process.exit(1); }
+          '
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: di-regression-report
+          path: |
+            dev/dreaminsight/regression.csv
+            dev/dreaminsight/reports/regression.html
+            dev/dreaminsight/alias_report.txt
+            dev/dreaminsight/reports/alias_removals.json
+            dev/dreaminsight/reports/alias_suggestions.md
+
+      - name: PR comment with summary (on PR only)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const sum = JSON.parse(fs.readFileSync('dev/dreaminsight/reports/summary.json','utf8'));
+            let fails = [];
+            try { fails = JSON.parse(fs.readFileSync('dev/dreaminsight/reports/fails.json','utf8')); } catch {}
+            let alias = '';
+            try { alias = fs.readFileSync('dev/dreaminsight/alias_report.txt','utf8'); } catch {}
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const topFails = fails.slice(0,10).map(f => `- ${f.id} (recall=${(Math.round((f.recall||0)*100)/100).toFixed(2)}; viol=${(f.violations||[]).join('|')}) — ${f.notes || ''}`).join('\n') || '(none)';
+            let aliasGuide = '';
+            try { aliasGuide = fs.readFileSync('dev/dreaminsight/reports/alias_suggestions.md','utf8'); } catch {}
+            const body = [
+              '## DreamInsight — Regression Summary',
+              '',
+              `- total: ${sum.total}  pass: ${sum.pass}  fail: ${sum.fail}  unknownRate: ${sum.unknownRate}%`,
+              `- Artifacts: [run artifacts](${runUrl}) — regression.csv, reports/regression.html`,
+              '',
+              '### Top FAIL cases',
+              topFails,
+              '',
+              '### Alias Collisions (top)',
+              '```',
+              (alias || '(none)').split('\n').slice(0,50).join('\n'),
+              '```',
+              '',
+              '### Alias Suggestions',
+              aliasGuide ? aliasGuide.split('\n').slice(0,30).join('\n') + '\n\n...(see artifact for full list)' : '(none)'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });

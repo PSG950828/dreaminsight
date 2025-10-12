@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3 } from "lucide-react";
+import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3, CheckCircle2, FileText, Infinity } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -12,11 +12,13 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
 import { getMergedSymbols, getMergedAliases, SymbolMeaning } from "@/lib/dictionary";
+import { analyzeDream as engineAnalyzeDream, noiseStats as engineNoiseStats } from "@/lib/analyze";
 import {
   upsertUserSymbol, upsertUserAliases, loadUserSymbols, loadUserAliases,
   removeUserSymbol, removeUserAliases, exportUserDict, importUserDict
 } from "@/lib/dictStore";
 import { augmentResult } from "@/lib/augment";
+import { getDeviceUID, getSupabase } from "@/lib/supabaseClient";
 
 // ---------- 타입 ----------
 type Analysis = {
@@ -32,6 +34,7 @@ type Analysis = {
   answer?: string;
   ruleHits?: string[];
   hints?: string[];
+  actionPlan?: Array<{ key: string; title: string; duration: number; script: string }>;
 };
 type Journal = { id: string; text: string; createdAt: number; analysis: Analysis };
 
@@ -310,17 +313,78 @@ function analyzeDream(raw: string): Analysis {
     patterns.includes("불안/통제감 저하 신호") ? "불안을 줄이는 가장 빠른 길은 '작은 통제 회복'. 10분 정리·호흡·라벨링 중 하나 즉시." :
     "꿈은 감정의 메타데이터. 감정-색-행동 중 하나를 현실에서 의식적으로 전환해 보세요.";
 
+  // 중복 정의 정리: 개인화 로직은 아래 공용 블록에서 한 번만 정의
+
+  // 개인화 보정: 조언(이미 적용) + 실행 계획 정렬
+  function readComboMap(): Record<string, number> {
+    try { const raw = localStorage.getItem('di.combo.v1') || '{}'; return JSON.parse(raw) as Record<string, number>; }
+    catch { return {}; }
+  }
+  function topCounts(prefix: 'S'|'E'|'C'): Record<string, number> {
+    const map = readComboMap();
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(map)) {
+      const parts = k.split('|');
+      for (const p of parts) if (p.startsWith(`${prefix}:`)) {
+        const key = p.slice(2); out[key] = (out[key]||0) + Number(v||0);
+      }
+    }
+    return out;
+  }
+  function personalizeAdvice(adviceArr: string[]): string[] {
+    const emoCounts = topCounts('E');
+    const has = (k:string, min=3)=> (emoCounts[k]||0) >= min;
+    const hot = { anx: has('emo_anxiety'), sad: has('emo_sadness'), fear: has('emo_fear') };
+    const keyScore = (a: string) => {
+      let s = 0;
+      if (hot.anx && /불안|라벨링|호흡|주의/.test(a)) s += 1.2;
+      if (hot.sad && /(우울|슬픔|정화|수면|빛)/.test(a)) s += 1.0;
+      if (hot.fear && /(두려움|공포|안정)/.test(a)) s += 0.8;
+      return s;
+    };
+    return [...adviceArr].map(a=>({a,s:keyScore(a)})).sort((x,y)=> y.s-x.s).map(x=>x.a);
+  }
+  type Plan = { key: string; title: string; duration: number; script: string; tags?: string[] };
+  function personalizePlans(plans: Plan[]): Plan[] {
+    const emoCounts = topCounts('E');
+    const has = (k:string, min=3)=> (emoCounts[k]||0) >= min;
+    const hot = { anx: has('emo_anxiety'), sad: has('emo_sadness'), fear: has('emo_fear') };
+    const score = (p: any, idx: number) => {
+      const t = (p.tags||[]).join(' ');
+      let s = 0;
+      if (hot.anx && /불안|주의|집중/.test(t)) s += 1.0;
+      if (hot.sad && /(우울|연결|정화|회복)/.test(t)) s += 0.8;
+      if (hot.fear && /(두려움|안정)/.test(t)) s += 0.6;
+      s += Math.max(0, 15 - Math.min(30, Number(p.duration)||0)) * 0.05; // 짧은 플랜 우선
+      s += Math.max(0, 8 - idx) * 0.03; // 기본 순서 약간 유지
+      return s;
+    };
+    return [...plans].map((p,i)=>({p,i,s:score(p,i)})).sort((a,b)=>b.s-a.s).map(x=>x.p);
+  }
+
+  const baseAdvice = Array.from(adviceBase).concat([goldenLine]);
+  const finalAdvice = personalizeAdvice(baseAdvice);
+
+  // 실행 계획: 엔진(analyze.ts) 기반 생성 + 개인화 정렬
+  let actionPlan: Plan[] = [];
+  try {
+    const engine = engineAnalyzeDream(raw as string) as any;
+    const plans = (engine?.actionPlan as any[]) || [];
+    actionPlan = personalizePlans(plans).slice(0, 6);
+  } catch {}
+
   return {
     summary,
     symbols: uniqueSymbols,
     emotions, colors, actions,
     patterns,
-    advice: Array.from(adviceBase).concat([goldenLine]),
+    advice: finalAdvice,
     journalingPrompts,
     giScore,
     answer,
     ruleHits,
     hints,
+    actionPlan,
   };
 }
 
@@ -565,6 +629,47 @@ export default function Page() {
   const [debug, setDebug] = useState(false);
 
   const [premiumOpen, setPremiumOpen] = useState(false);
+  const [postOpen, setPostOpen] = useState(false);
+  const [postBusy, setPostBusy] = useState(false);
+  const [anonName, setAnonName] = useState<string>("");
+  const [postPrivate, setPostPrivate] = useState<boolean>(false);
+  const [lastPostId, setLastPostId] = useState<string | null>(null);
+  const sbClient = getSupabase();
+  // Upsell A/B variant & payment link mapping
+  const [variant, setVariant] = useState<'A'|'B'>(()=>{
+    try { const v = localStorage.getItem('di.upsell.variant'); if (v==='A'||v==='B') return v; } catch {}
+    return Math.random() < 0.5 ? 'A' : 'B';
+  });
+  useEffect(()=>{ try { if (!localStorage.getItem('di.upsell.variant')) localStorage.setItem('di.upsell.variant', variant); } catch {} }, [variant]);
+  const paymentUrl = useMemo(()=>{
+    const A = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL_A || '';
+    const B = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL_B || '';
+    const F = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL || '';
+    const pick = variant === 'A' ? (A || F) : (B || F);
+    return pick || '/checkout';
+  }, [variant]);
+  function trackUpsell(k: 'open'|'click.subscribe', ctx: string) {
+    try {
+      fetch('/api/telemetry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'upsell', key: `${k}.${ctx}.${variant}`, delta: 1, user_uid: getDeviceUID?.() || 'client' })
+      }).catch(()=>{});
+    } catch {}
+  }
+  const [isPlus, setIsPlus] = useState(false);
+  // 커뮤니티 로컬 모드 키/유틸(서버 미설정 시 사용)
+  const COMM_PKEY = "di.comm.posts.v1";
+  function genLocalId() { return `local_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`; }
+  function saveLocalCommunityPost(text: string, anon: string, isPrivate: boolean) {
+    try {
+      const raw = localStorage.getItem(COMM_PKEY) || "[]";
+      const list = JSON.parse(raw) as Array<any>;
+      const p = { id: genLocalId(), text, createdAt: Date.now(), anon, private: !!isPrivate, pinned: false, votes: 0 };
+      list.unshift(p);
+      localStorage.setItem(COMM_PKEY, JSON.stringify(list));
+      return p.id as string;
+    } catch { return ""; }
+  }
 
   // 25분 타이머 (초 단위)
   const [focusActive, setFocusActive] = useState(false);
@@ -573,16 +678,52 @@ export default function Page() {
   // 디버그 로그(augment 히트 표시)
   const [debugLog, setDebugLog] = useState<string>("");
 
+  // 오늘의 챌린지(간단한 일일 테마)
+  const challenge = useMemo(() => {
+    const d = new Date();
+    const themes = [
+      { key: '전환', hint: '공항/엘리베이터/계단/다리' },
+      { key: '정화', hint: '물/바다/폭우/눈/하양' },
+      { key: '통제', hint: '추락/브레이크/운전/검정' },
+      { key: '표현', hint: '치아/시험/발화/무대' },
+      { key: '확장', hint: '비행/보라/빛/산 정상' },
+    ];
+    const idx = (d.getUTCFullYear() * 366 + d.getUTCDate()) % themes.length;
+    return themes[Math.abs(idx)];
+  }, []);
+
   useEffect(()=>{
     setJournals(loadJournals());
     try {
       const s = localStorage.getItem("dream.autoAnalyze");
       if (s != null) setAutoAnalyze(s === "1");
     } catch {}
+    // Referral tracking (?ref=CODE)
+    try {
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(location.search);
+        const ref = sp.get('ref');
+        if (ref) {
+          localStorage.setItem('di.ref', ref);
+          fetch('/api/telemetry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'referral', key:`open.${ref}`, delta:1, user_uid: getDeviceUID?.() || 'client' }) }).catch(()=>{});
+        }
+      }
+    } catch {}
+    // Plus 플래그 로드
+    (async ()=>{
+      try { if (localStorage.getItem('dreaminsight.plus')==='1') setIsPlus(true); } catch {}
+      try { const r = await fetch('/api/me'); const j = await r.json(); if (j?.plus) setIsPlus(true); } catch {}
+    })();
   }, []);
   // 입력 임시저장 로드
   useEffect(()=>{
     try {
+      // URL prefill 우선
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(location.search);
+        const pf = sp.get('prefill') || '';
+        if (pf && !text) setText(pf);
+      }
       const d = localStorage.getItem("dream.draft");
       if (d && !text) setText(d);
     } catch {}
@@ -633,9 +774,60 @@ export default function Page() {
       setDebugLog(dbg);
 
       setDraftAnalysis(merged);
+
+      // Telemetry: 저정보/노이즈 입력(30분 쿨다운)
+      try {
+        const ns = engineNoiseStats(v);
+        const key = 'di.noise.sentAt';
+        const last = Number(localStorage.getItem(key) || '0');
+        if (ns.lowInfo && Date.now() - last > 30*60*1000) {
+          fetch('/api/telemetry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'parse', key: 'noise', delta: 1, user_uid: getDeviceUID?.() || 'client' }) }).catch(()=>{});
+          localStorage.setItem(key, String(Date.now()));
+        }
+      } catch {}
     }, 250);
     return ()=> clearTimeout(t);
   }, [text, autoAnalyze]);
+  // 커뮤니티 닉네임 기본값 로드
+  useEffect(()=>{
+    if (!postOpen) return;
+    if (anonName && anonName.trim()) return;
+    try {
+      const cur = localStorage.getItem('di.comm.anon');
+      if (cur) setAnonName(cur);
+      else setAnonName('익명');
+    } catch { setAnonName('익명'); }
+  }, [postOpen]);
+
+  // 미커버 토큰 로깅(로컬) — 텍스트 변화시 디바운스 호출
+  useEffect(()=>{
+    const v = text.trim(); if (v.length < 5) return;
+    const h = setTimeout(async ()=>{
+      try {
+        const r = await fetch('/api/dictionary/suggest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: v }) });
+        const j = await r.json();
+        if (r.ok) {
+          const cand: string[] = j?.candidates || [];
+          try {
+            const raw = localStorage.getItem('di.unknown.v1') || '{}';
+            const obj = JSON.parse(raw) as Record<string, number>;
+            cand.forEach(w => { obj[w] = (obj[w] || 0) + 1; });
+            localStorage.setItem('di.unknown.v1', JSON.stringify(obj));
+          } catch {}
+          // best-effort telemetry (optional)
+          try {
+            const uid = (document.cookie.match(/(?:^|; )di_uid=([^;]+)/)?.[1] ? decodeURIComponent(document.cookie.match(/(?:^|; )di_uid=([^;]+)/)![1]) : '');
+            if (uid && cand.length) {
+              // only send top 3 tokens to reduce noise
+              const top3 = cand.slice(0,3);
+              top3.forEach(w => fetch('/api/telemetry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'unknown', key: w, delta: 1, user_uid: uid }) }).catch(()=>{}));
+            }
+          } catch {}
+        }
+      } catch {}
+    }, 600);
+    return ()=> clearTimeout(h);
+  }, [text]);
   useEffect(()=>{
     if (!focusActive) return;
     if (focusLeft <= 0) { setFocusActive(false); return; }
@@ -651,6 +843,20 @@ export default function Page() {
   }, [text]);
 
   function handleAnalyze() {
+    // Daily free quota gate (client-side) — Plus unlimited
+    try {
+      if (!isPlus) {
+        const key = 'di.quota.analyze.v1';
+        const raw = localStorage.getItem(key);
+        const day = new Date().toISOString().slice(0,10);
+        let obj: { day: string; c: number } = { day, c: 0 };
+        try { if (raw) obj = JSON.parse(raw); } catch {}
+        if (obj.day !== day) obj = { day, c: 0 };
+        const limit = parseInt(String(process.env.NEXT_PUBLIC_DAILY_QUOTA_ANALYZE || '3'), 10) || 3;
+        if (obj.c >= limit) { setPremiumOpen(true); return; }
+        obj.c += 1; localStorage.setItem(key, JSON.stringify(obj));
+      }
+    } catch {}
     const v = text.trim(); if (v.length < 6) return;
     const base = analyzeDream(v);
     const augmented = augmentResult({
@@ -724,11 +930,16 @@ export default function Page() {
     "검은 밤에 높은 건물에서 떨어졌는데 치아가 하나 부서졌어요. 파란 바다가 멀리 보였어요.",
     "누군가에게 쫓겨 골목을 도망쳤고, 마지막엔 날아올라 탈출했어요. 이상하게도 금색 빛이 돌았어요.",
     "시험장에 갔는데 준비가 안 되어 말이 나오지 않았고, 집으로 달려 돌아왔어요.",
+    "지하철이 너무 붐비고 늦을까 불안했어요. 노란불이 깜빡였고 결국 버스를 타고 돌아왔어요.",
+    "공항에서 게이트를 놓치고 다리를 건너 터널을 지났어요. 길을 잃은 느낌이었어요.",
+    "장례식에 갔고 거울을 보니 머리카락이 한 움큼 빠져 있었어요.",
+    "바닷가에서 상어를 보고 물에 빠질 뻔했어요. 무섭고 숨이 막혔어요.",
+    "엘리베이터가 급하강했고 경찰이 나타났어요. 도둑을 쫓는 꿈이었어요.",
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 text-zinc-900 dark:text-zinc-50">
-      <div className="max-w-md mx-auto px-4 py-6 sm:py-10">
+      <div className="max-w-3xl mx-auto px-4 py-6 sm:py-10">
         {/* 헤더 */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -745,6 +956,33 @@ export default function Page() {
             <Button variant="ghost" size="sm" onClick={()=>setDebug(v=>!v)} title="디버그 토글">
               {debug ? "디버그: ON" : "디버그: OFF"}
             </Button>
+          </div>
+        </div>
+
+        {/* 혜택 배너 — 프리미엄 톤(글래스+엘리베이션) */}
+        <div className="mb-4 rounded-2xl border border-zinc-200/40 dark:border-zinc-800/50 overflow-hidden glass elev-1">
+          <div className="bg-gradient-to-r from-violet-100/60 to-blue-100/60 dark:from-violet-900/20 dark:to-blue-900/10 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-violet-700 dark:text-violet-300" />
+                <div className="text-sm font-semibold">Plus 혜택</div>
+              </div>
+              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>{ window.open(paymentUrl, '_blank'); trackUpsell('click.subscribe','banner'); }}>지금 시작하기</Button>
+            </div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
+                <Infinity className="w-4 h-4 text-emerald-600" />
+                <span>하루 <b>무료 3회</b> 이후 <b>무제한 해석</b></span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
+                <FileText className="w-4 h-4 text-indigo-600" />
+                <span><b>PDF 저장</b> · <b>심층(GI/MDA)</b> · <b>서버 보관</b></span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
+                <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                <span>커뮤니티 <b>일일 한도 해제</b>(업로드/댓글/신고)</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -813,26 +1051,33 @@ export default function Page() {
                     <div className="flex flex-wrap gap-2 mt-1">
                       {draftAnalysis.actions.map((a,i)=>(<Pill key={`a${i}`}>{a}</Pill>))}
                     </div>
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant={focusActive ? "secondary" : "default"} onClick={()=>{
-                        if (focusActive) { setFocusActive(false); setFocusLeft(25*60); }
-                        else { setFocusLeft(25*60); setFocusActive(true); }
-                      }}>
-                        {focusActive ? "타이머 중지" : "25분 집중 시작"}
-                      </Button>
-                    </div>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant={focusActive ? "secondary" : "default"} onClick={()=>{
+                      if (focusActive) { setFocusActive(false); setFocusLeft(25*60); }
+                      else { setFocusLeft(25*60); setFocusActive(true); }
+                    }}>
+                      {focusActive ? "타이머 중지" : "25분 집중 시작"}
+                    </Button>
+                    <Button size="sm" variant="default" onClick={()=> setPostOpen(true)}>
+                      커뮤니티에 올리기
+                    </Button>
+                  </div>
                     <div className="pt-2 flex justify-end">
-                      <Button size="sm" variant="default" onClick={()=>setPremiumOpen(true)}>
+                      <Button size="sm" variant="default" onClick={()=>{ setPremiumOpen(true); trackUpsell('open','analyze'); }}>
                         심층 리포트 보기
                       </Button>
                     </div>
-                    <Dialog open={premiumOpen} onOpenChange={setPremiumOpen}>
+                    <Dialog open={premiumOpen} onOpenChange={(v)=>{ setPremiumOpen(v); if (v) trackUpsell('open','analyze'); }}>
                       <DialogContent>
                         <DialogHeader>
                           <DialogTitle>프리미엄 리포트(미리보기)</DialogTitle>
                         </DialogHeader>
                         <div className="space-y-3 text-sm">
-                          <p className="opacity-80">요약 압축, 핵심 패턴, 실행 조언을 PDF로 저장할 수 있습니다.</p>
+                          {variant==='A' ? (
+                            <p className="opacity-80">요약 압축, 핵심 패턴, 실행 조언을 <b>PDF로 저장</b>하고 <b>무제한 해석</b>을 이용해 보세요.</p>
+                          ) : (
+                            <p className="opacity-80">오늘의 꿈을 <b>더 깊게</b>— GI/MDA 내러티브와 <b>실행 코칭</b>, <b>서버 보관</b>까지 한 번에.</p>
+                          )}
                           {draftAnalysis && (
                             <div className="space-y-2">
                               <div><b>요약:</b> {draftAnalysis.summary}</div>
@@ -842,12 +1087,104 @@ export default function Page() {
                                   {draftAnalysis.advice.slice(0,3).map((a,i)=><li key={i}>{a}</li>)}
                                 </ul>
                               </div>
+                              {!isPlus && (
+                                <div className="pt-2">
+                                  <a onClick={()=> { trackUpsell('click.subscribe','analyze'); }} href={paymentUrl} target="_blank" className="inline-block px-3 py-2 rounded-md border bg-emerald-600 text-white text-xs">
+                                    {variant==='A' ? 'Plus ₩1,000/월 구독하기' : '지금 Plus 시작하기'}
+                                  </a>
+                                  <div className="text-[11px] opacity-70 mt-1">{variant==='A' ? '심층 리포트 · PDF 저장 · 서버 보관 · 무제한 해석' : 'GI/MDA 내러티브 · 실행 코칭 · 무제한 해석'}</div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
                         <DialogFooter>
                           <Button onClick={()=>setPremiumOpen(false)} variant="secondary">닫기</Button>
-                          <Button onClick={()=>alert("PDF 내보내기는 추후 연결 예정")}>PDF로 내보내기</Button>
+                          {isPlus ? (
+                            <Button onClick={()=> exportReportAsPDF(text, draftAnalysis)}>PDF로 내보내기</Button>
+                          ) : (
+                            <Button onClick={()=> { trackUpsell('click.subscribe','analyze'); window.open(paymentUrl, '_blank'); }}>{variant==='A' ? 'Plus ₩1,000/월' : 'Plus 구독하기'}</Button>
+                          )}
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                    {/* 커뮤니티 업로드 다이얼로그 */}
+                    <Dialog open={postOpen} onOpenChange={setPostOpen}>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>커뮤니티에 공유</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-3 text-sm">
+                          {!sbClient && (
+                            <div className="text-xs p-2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                              서버 미설정: <b>로컬 업로드 모드</b>로 저장됩니다. 공유 상세 페이지(/share)는 서버 설정 후 이용할 수 있어요. 지금은 OG 이미지 링크 복사로 공유하세요.
+                            </div>
+                          )}
+                          <div className="opacity-80">아래 내용이 게시됩니다:</div>
+                          <div className="p-3 rounded-md border bg-zinc-50 dark:bg-zinc-900/40 whitespace-pre-wrap leading-6 max-h-40 overflow-auto">{text}</div>
+                          <div className="grid gap-2">
+                            <Label>닉네임(익명 표기)</Label>
+                            <input className="border rounded px-3 py-2 text-sm bg-transparent" placeholder="예: 익명, 파란돌고래" value={anonName} onChange={(e)=>setAnonName(e.target.value)} />
+                            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={postPrivate} onChange={(e)=>setPostPrivate(e.target.checked)} /> 비공개(나만 보기)</label>
+                          </div>
+                          {lastPostId && (
+                            <div className="text-xs opacity-80">게시됨: <a className="underline" href={`/share/${encodeURIComponent(lastPostId)}`} target="_blank" rel="noopener noreferrer">공유 링크 열기</a></div>
+                          )}
+                        </div>
+                        <DialogFooter>
+                          <Button onClick={()=> setPostOpen(false)} variant="secondary">닫기</Button>
+                          <Button disabled={postBusy || (text.trim().length < 6)} onClick={async()=>{
+                            const v = text.trim(); if (v.length < 6) { alert('6자 이상 입력해 주세요.'); return; }
+                            setPostBusy(true);
+                            try {
+                              const uid = getDeviceUID();
+                              const r = await fetch('/api/community/posts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: v, anon_name: anonName || '익명', user_uid: uid, private: !!postPrivate }) });
+                              const j = await r.json();
+                              if (!r.ok) {
+                                // 서버 미설정 등일 때 로컬 커뮤니티로 폴백 저장
+                                const localId = saveLocalCommunityPost(v, (anonName||'익명'), !!postPrivate);
+                                setLastPostId(null);
+                                try {
+                                  const og = new URL(`/api/og?text=${encodeURIComponent(v.slice(0,160))}`, location.origin).toString();
+                                  await navigator.clipboard.writeText(og);
+                                  alert('서버 미설정: 로컬 커뮤니티에 저장했습니다. OG 이미지 링크를 클립보드에 복사했어요. /community에서 확인하세요.');
+                                } catch {
+                                  alert('서버 미설정: 로컬 커뮤니티에 저장했습니다. /community에서 확인하세요.');
+                                }
+                                setPostOpen(false);
+                                return;
+                              }
+                              const id = j?.post?.id; setLastPostId(id || null);
+                              if (id) {
+                                try { await navigator.clipboard.writeText(new URL(`/share/${id}`, location.origin).toString()); } catch {}
+                                alert('게시 완료! 공유 링크가 복사되었습니다.');
+                                setPostOpen(false);
+                              }
+                            } catch (e:any) {
+                              // 네트워크/기타 오류 시에도 로컬 폴백
+                              try {
+                                const v2 = text.trim();
+                                if (v2.length >= 6) {
+                                  const localId = saveLocalCommunityPost(v2, (anonName||'익명'), !!postPrivate);
+                                  setLastPostId(null);
+                                  try {
+                                    const og = new URL(`/api/og?text=${encodeURIComponent(v2.slice(0,160))}`, location.origin).toString();
+                                    await navigator.clipboard.writeText(og);
+                                    alert('오프라인: 로컬 커뮤니티에 저장했습니다. OG 이미지 링크를 복사했어요. /community에서 확인하세요.');
+                                  } catch {
+                                    alert('오프라인: 로컬 커뮤니티에 저장했습니다. /community에서 확인하세요.');
+                                  }
+                                  setPostOpen(false);
+                                } else {
+                                  alert('오류: ' + (e?.message || e));
+                                }
+                              } catch {
+                                alert('오류: ' + (e?.message || e));
+                              }
+                            } finally {
+                              setPostBusy(false);
+                            }
+                          }}>{postBusy? '게시중…' : '게시하기'}</Button>
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
@@ -995,6 +1332,21 @@ export default function Page() {
                         </ul>
                       )}
                     </Section>
+                    {j.analysis.actionPlan && j.analysis.actionPlan.length > 0 && (
+                      <Section title="실행 계획">
+                        <div className="space-y-2">
+                          {j.analysis.actionPlan.map((p, i)=> (
+                            <div key={i} className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200/60 dark:border-zinc-800/60">
+                              <div className="flex items-center justify-between">
+                                <div className="font-medium">{p.title}</div>
+                                <div className="text-[11px] opacity-70">{p.duration}분</div>
+                              </div>
+                              <div className="text-[13px] opacity-90 mt-1 whitespace-pre-wrap">{p.script}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </Section>
+                    )}
                     <Section title="저널 프롬프트">
                       <ul className="list-disc list-inside space-y-1">
                         {j.analysis.journalingPrompts.map((q,i)=><li key={i}>{q}</li>)}
@@ -1182,3 +1534,68 @@ function downloadReportCSV(report: DreamReport) {
   a.href = url; a.download = `dream-report-${Date.now()}.csv`; a.click();
   URL.revokeObjectURL(url);
 }
+
+function exportReportAsPDFLike(text: string, a: Analysis) {
+  try {
+    const now = new Date();
+    const lines = [
+      `<h1 style="margin:0 0 8px 0; font-size:20px;">DreamInsight — 꿈 해석 리포트</h1>`,
+      `<div style="font-size:12px; opacity:.7; margin-bottom:16px;">작성일: ${now.toLocaleString()}</div>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">꿈 내용</h2>`,
+      `<div style="white-space:pre-wrap; line-height:1.6;">${escapeHtml(text)}</div>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">요약</h2>`,
+      `<div style="white-space:pre-wrap; line-height:1.6;">${escapeHtml(a.summary || '')}</div>`,
+      a.answer ? `<h2 style="font-size:16px; margin:12px 0 6px;">즉답</h2><div>${escapeHtml(a.answer)}</div>` : '',
+      `<h2 style="font-size:16px; margin:12px 0 6px;">상징 해석</h2>`,
+      `<ul>${a.symbols.map(s=>`<li><b>${escapeHtml(s.label)}</b>: ${escapeHtml(s.meaning||'')}</li>`).join('') || '<li>(상징 없음)</li>'}</ul>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">감정/색/행동</h2>`,
+      `<div>감정: ${a.emotions.join(', ')||'(없음)'}<br/>색: ${a.colors.map(c=>`${escapeHtml(c.key)}(${escapeHtml(c.cue)})`).join(', ')||'(없음)'}<br/>행동: ${a.actions.join(', ')||'(없음)'}</div>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">패턴</h2>`,
+      `<ul>${a.patterns.map(p=>`<li>${escapeHtml(p)}</li>`).join('') || '<li>(패턴 미도출)</li>'}</ul>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">실천 조언</h2>`,
+      `<ul>${a.advice.map(x=>`<li>${escapeHtml(x)}</li>`).join('') || '<li>(조언 없음)</li>'}</ul>`,
+      `<h2 style="font-size:16px; margin:12px 0 6px;">저널 프롬프트</h2>`,
+      `<ul>${a.journalingPrompts.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul>`,
+      // Action Plan (optional)
+      (Array.isArray((a as any).actionPlan) && (a as any).actionPlan.length ? (
+        `<h2 style=\"font-size:16px; margin:12px 0 6px;\">행동 계획</h2>`+
+        `<ol>${((a as any).actionPlan as any[]).map(it=>`<li><b>${escapeHtml(it.title||'')}</b> — ${Number(it.duration)||0}분<br/>${escapeHtml(it.script||'')}</li>`).join('')}</ol>`
+      ) : ''),
+      // Evidence (optional)
+      (((a as any).evidence && Array.isArray((a as any).evidence.rules) && (a as any).evidence.rules.length) ? (
+        `<h2 style=\"font-size:16px; margin:12px 0 6px;\">근거 규칙</h2>`+
+        `<ul>${((a as any).evidence.rules as string[]).map(r=>`<li>${escapeHtml(r)}</li>`).join('')}</ul>`
+      ) : ''),
+      // GI/MDA (optional)
+      ((a as any).narrative ? (`<h2 style=\"font-size:16px; margin:12px 0 6px;\">심층 내러티브</h2><div style=\"white-space:pre-wrap;\">${escapeHtml((a as any).narrative)}</div>`) : ''),
+    ].filter(Boolean);
+    const html = `<!doctype html><html><head><meta charset="utf-8"/><title>DreamInsight Report</title>
+      <style>body{font-family:-apple-system, system-ui, Segoe UI, Roboto, Apple SD Gothic Neo, Noto Sans KR, Arial, sans-serif; padding:24px; color:#111;} ul{margin:0 0 8px 16px;}</style>
+      </head><body>${lines.join('\n')}<script>setTimeout(()=>{window.print();},300)</script></body></html>`;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.');
+    setTimeout(()=> URL.revokeObjectURL(url), 60_000);
+  } catch (e) {
+    alert('내보내기 실패: ' + (e as any)?.message);
+  }
+}
+
+function escapeHtml(s: string) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function exportReportAsPDF(text: string, a: Analysis) {
+  try {
+    const r = await fetch('/api/report/pdf', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, analysis: a }) });
+    if (r.ok) {
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const aEl = document.createElement('a'); aEl.href = url; aEl.download = `dream-report-${new Date().toISOString().slice(0,10)}.pdf`; aEl.click(); URL.revokeObjectURL(url);
+      return;
+    }
+  } catch {}
+  exportReportAsPDFLike(text, a);
+}
+        

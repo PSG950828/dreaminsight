@@ -1,0 +1,201 @@
+name: Lighthouse CI
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # Every Monday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Deployed BASE_URL to audit (e.g., https://staging.example.com)'
+        required: true
+        type: string
+      pages:
+        description: 'Space-separated paths to audit (e.g., "/ /community /stats")'
+        required: false
+        default: '/ /community'
+        type: string
+      perf_threshold:
+        description: 'Min performance score (0~1)'
+        required: false
+        default: '0.80'
+        type: string
+      acc_threshold:
+        description: 'Min accessibility score (0~1)'
+        required: false
+        default: '0.90'
+        type: string
+      bp_threshold:
+        description: 'Min best-practices score (0~1)'
+        required: false
+        default: '0.90'
+        type: string
+      seo_threshold:
+        description: 'Min SEO score (0~1)'
+        required: false
+        default: '0.90'
+        type: string
+      pr_number:
+        description: 'PR number to comment scores (optional)'
+        required: false
+        type: string
+      publish_pages:
+        description: 'Publish HTML reports to GitHub Pages (true|false)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true','false']
+
+jobs:
+  lhci:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: lighthouse-${{ inputs.base_url }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    env:
+      FALLBACK_BASE_URL: ${{ secrets.OPS_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Lighthouse CI
+        run: npm i -g @lhci/cli@0.12.x
+      - name: Run audits
+        id: run
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          set -e
+          # Fallback when scheduled: use OPS_BASE_URL secret if input is empty
+          if [ -z "$BASE_URL" ]; then BASE_URL="$FALLBACK_BASE_URL"; fi
+          mkdir -p lhci
+          for p in $PAGES; do
+            safe=$(echo "$p" | sed 's#[^a-zA-Z0-9_-]#_#g')
+            lhci collect --url "$BASE_URL$p" --outputPath "lhci/lh-$safe.html" --numberOfRuns=1 --collect.settings=form_factor=desktop || true
+            lhci collect --url "$BASE_URL$p" --output=json --outputPath "lhci/lh-$safe.json" --numberOfRuns=1 --collect.settings=form_factor=desktop || true
+          done
+      - name: Threshold check
+        id: check
+        env:
+          PERF_T: ${{ inputs.perf_threshold }}
+          ACC_T: ${{ inputs.acc_threshold }}
+          BP_T: ${{ inputs.bp_threshold }}
+          SEO_T: ${{ inputs.seo_threshold }}
+        run: |
+          set -e
+          fail=0
+          summary=""
+          for f in lhci/*.json; do
+            [ -f "$f" ] || continue
+            P=$(jq -r '.categories.performance.score // empty' "$f")
+            A=$(jq -r '.categories.accessibility.score // empty' "$f")
+            B=$(jq -r '.categories["best-practices"].score // empty' "$f")
+            S=$(jq -r '.categories.seo.score // empty' "$f")
+            name=$(basename "$f")
+            line="$name perf=${P:-N/A} acc=${A:-N/A} bp=${B:-N/A} seo=${S:-N/A}"
+            summary+="$line
+"
+            awk -v v="$P" -v t="$PERF_T" 'BEGIN{ if(v!="" && v<t) exit 0; exit 1 }' && fail=1 || true
+            awk -v v="$A" -v t="$ACC_T" 'BEGIN{ if(v!="" && v<t) exit 0; exit 1 }' && fail=1 || true
+            awk -v v="$B" -v t="$BP_T" 'BEGIN{ if(v!="" && v<t) exit 0; exit 1 }' && fail=1 || true
+            awk -v v="$S" -v t="$SEO_T" 'BEGIN{ if(v!="" && v<t) exit 0; exit 1 }' && fail=1 || true
+          done
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          echo "$summary" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "alert=$fail" >> $GITHUB_OUTPUT
+      - name: Summary
+        run: |
+          echo "# Lighthouse Reports" >> $GITHUB_STEP_SUMMARY
+          echo "Base: ${{ inputs.base_url }}" >> $GITHUB_STEP_SUMMARY
+          for f in lhci/*.html; do echo "- $(basename "$f")" >> $GITHUB_STEP_SUMMARY; done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scores" >> $GITHUB_STEP_SUMMARY
+          echo '```
+${{ steps.check.outputs.report }}
+```' >> $GITHUB_STEP_SUMMARY
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        id: artifact
+        with:
+          name: lighthouse-${{ github.run_id }}
+          path: lhci/**
+          if-no-files-found: warn
+      - name: Upload Pages artifact (optional)
+        if: ${{ inputs.pr_number == '' && inputs.publish_pages == 'true' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: lhci
+      - name: Deploy to GitHub Pages (optional)
+        if: ${{ inputs.pr_number == '' && inputs.publish_pages == 'true' }}
+        id: pages
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
+      - name: Create performance alert issue (optional)
+        if: ${{ steps.check.outputs.alert == '1' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Lighthouse threshold alert: ${process.env.GITHUB_RUN_ID}`;
+            const body = [
+              `Base: ${{ inputs.base_url }}`,
+              `Thresholds: perf=${{ inputs.perf_threshold }}, acc=${{ inputs.acc_threshold }}, bp=${{ inputs.bp_threshold }}, seo=${{ inputs.seo_threshold }}`,
+              `Report:\n\n${{ steps.check.outputs.report }}`,
+              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            ].join('\n');
+            const labels = ['ops','performance'];
+            await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body, labels });
+      - name: Notify Slack (optional)
+        if: ${{ steps.check.outputs.alert == '1' && secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ART_URL="https://github.com/${{ github.repository }}/artifacts/${{ steps.artifact.outputs.artifact-id }}"
+          BASE="${{ inputs.base_url }}"; [ -z "$BASE" ] && BASE="${{ secrets.OPS_BASE_URL }}"
+          PAGES_URL="${{ steps.pages.outputs.page_url }}"
+          TEXT="⚠️ Lighthouse thresholds breached\nBase: ${BASE}\n${{ steps.check.outputs.report }}\nRun: ${RUN_URL}\nArtifacts: ${ART_URL}$( [ -n "$PAGES_URL" ] && echo "\nPages: $PAGES_URL" )"
+          curl -s -X POST -H 'Content-type: application/json' --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" "$SLACK_WEBHOOK_URL"
+      - name: Notify Discord (optional)
+        if: ${{ steps.check.outputs.alert == '1' && secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ART_URL="https://github.com/${{ github.repository }}/artifacts/${{ steps.artifact.outputs.artifact-id }}"
+          BASE="${{ inputs.base_url }}"; [ -z "$BASE" ] && BASE="${{ secrets.OPS_BASE_URL }}"
+          PAGES_URL="${{ steps.pages.outputs.page_url }}"
+          CONTENT="⚠️ Lighthouse thresholds breached\nBase: ${BASE}\n${{ steps.check.outputs.report }}\nRun: ${RUN_URL}\nArtifacts: ${ART_URL}$( [ -n "$PAGES_URL" ] && echo "\nPages: $PAGES_URL" )"
+          curl -s -H "Content-Type: application/json" -d "$(jq -nc --arg content "$CONTENT" '{content:$content}')" "$DISCORD_WEBHOOK_URL"
+      - name: Comment on PR (optional)
+        if: ${{ inputs.pr_number != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const number = Number('${{ inputs.pr_number }}');
+            const artUrl = `https://github.com/${{ github.repository }}/artifacts/${{ steps.artifact.outputs['artifact-id'] }}`;
+            const body = [
+              '### Lighthouse Report',
+              `Base: ${{ inputs.base_url }}`,
+              `Thresholds: perf=${{ inputs.perf_threshold }}, acc=${{ inputs.acc_threshold }}, bp=${{ inputs.bp_threshold }}, seo=${{ inputs.seo_threshold }}`,
+              '',
+              '```
+${{ steps.check.outputs.report }}
+```',
+              `Artifacts: ${artUrl}`
+            ].join('\n');
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, body });
+      - name: Add perf-alert label to PR (optional)
+        if: ${{ steps.check.outputs.alert == '1' && inputs.pr_number != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const number = Number('${{ inputs.pr_number }}');
+            await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, labels: ['perf-alert'] });

@@ -6,6 +6,15 @@
 import { KOR_ALIASES } from './dict/aliases';
 import { SYMBOLS } from './dict/core';
 import { EXTRA_SYMBOLS } from './dict/extra';
+import { IMPORTED_SYMBOLS } from './dict/imported';
+import {
+  KOR_CORRECTIONS as BASE_KOR_CORRECTIONS,
+  EMOTION_CORRECTIONS as BASE_EMOTION_CORRECTIONS,
+  applyCorrections as baseApplyCorrections,
+  applyEmotionCorrections as baseApplyEmotionCorrections,
+  normalizeText as baseNormalizeText,
+  preprocessDreamText as basePreprocessDreamText,
+} from './dict/corrections';
 
 export type SymbolMeaning = {
   label: string;          // 화면에 보일 이름 (한글)
@@ -13,6 +22,10 @@ export type SymbolMeaning = {
   meaning: string;        // 해설(의미 + 심리 기제 + 상황별 해석)
   advice?: string;        // 바로 실행할 수 있는 1문장 행동 조언 (일부 항목은 없을 수 있음)
   category?: string;      // 선택: 사물/행동/동물/인물/장소/성격·태도/자연/디지털/상태·사건
+  contexts?: {            // 선택: 심화 문맥
+    psych?: string;       // 심리학/임상 관점의 보강 설명
+    culture?: { kr?: string; en?: string }; // 문화권별 해석 노트
+  };
 };
 
 // -----------------------------------------------------
@@ -100,98 +113,131 @@ const KOR_ALIASES_EXT: Record<string, string[]> = {
     "숨다","숨음","숨기","숨어있다","몸을 숨기다","피신","은신","숨었다","숨었어",
     "숨어서 기다림","장소에 숨다","옷장에 숨다","침대 밑에 숨다","화장실에 숨다"
   ],
+  // ── 추가 상징군 동의어 보강 ──
+  lost_way: ["길 잃음","길을 잃다","헤매다","길 헤매","방향 잃다","미로"],
+  elevator: ["엘리베이터","승강기","리프트"],
+  toilet: ["화장실","볼일","변기","wc","restroom","toilet"],
+  naked: ["나체","벌거","벗은","알몸","옷을 안 입","옷이 없음"],
+  snake: ["뱀","구렁이","독사"],
+  dog: ["개","강아지","멍멍이","견"],
+  cat: ["고양이","냥이","묘"],
+  baby: ["아기","아이","베이비","신생아"],
+  fire: ["불","화재","불길","불타다","불이 나다"],
+  blood: ["피","혈","출혈","피가 남"],
+  mirror: ["거울","미러","거울을 보다","비추다"],
+  hair_loss: ["머리카락 빠짐","머리카락이 빠지","탈모","머리 숱","머리털"],
+  school: ["학교","스쿨","교정"],
+  classroom: ["교실","반","클래스룸"],
+  teacher: ["선생님","선생","스승","교사","담임"],
+  car: ["자동차","차","승용차","운전"],
+  car_accident: ["교통사고","차 사고","차사고","접촉사고","추돌"],
+  bus: ["버스","시내버스","광역버스","마을버스","버스정류장","정류장"],
+  train: ["기차","열차","ktx","지하철","전철","지하철역","환승"],
+  airplane: ["비행기","항공기","이륙","착륙"],
+  airport: ["공항","터미널","게이트","보안검색"],
+  bridge: ["다리","교량","브리지"],
+  tunnel: ["터널","굴"],
+  road_highway: ["도로","고속도로","하이웨이","국도","톨게이트","인터체인지","분기점"],
+  mountain: ["산","봉우리","정상","남산","북한산","한라산","설악산"],
+  forest: ["숲","수풀","삼림"],
+  river: ["강","개울","하천","한강"],
+  subway_crowd: ["지옥철","환승역","출퇴근 시간","만원 전철","만원 지하철"],
+  taxi_lost: ["택시가 길을 잃","택시 길 잘못","돌려 가","택시 기사 헤맴"],
+  drowning: ["물에 빠지","익사","허우적","숨이 잠기"],
+  earthquake: ["지진","진동","진도","붕괴","갈라짐","금 가"],
+  volcano: ["화산","분화","용암"],
+  ghost: ["유령","귀신","망령","혼령","원혼"],
+  zombie: ["좀비","언데드"],
+  spider: ["거미","곤충","거미줄"],
+  tiger: ["호랑이","범"],
+  bear: ["곰"],
+  fish: ["물고기","생선","잉어","금붕어"],
+  whale: ["고래","혹등고래","범고래"],
+  shark: ["상어","백상아리"],
+  prison: ["감옥","교도소","구치소"],
+  police: ["경찰","폴리스","순경","형사"],
+  theft: ["도둑","도난","절도","소매치기","훔치"],
+  money: ["돈","현금","자금","비용","지출"],
+  lottery: ["복권","로또","당첨"],
+  funeral: ["장례","상가","상례","부고","상복","발인","빈소","조문","영정"],
+  ring_lost: ["반지 분실","반지 잃어버림","웨딩링 잃음","프로포즈 반지 분실","커플링 잃음"],
+  wedding_canceled: ["결혼식 취소","식 취소","파혼","예식 취소","식장 취소","주례 취소"],
+  pregnancy: ["임신","임부","태동"],
+  pregnancy_test: ["임테기","임신 테스트","두 줄","한 줄"],
+  menstruation: ["생리","월경","피가 나옴","생리혈"],
+  late: ["지각","늦음","늦었다","시간 놓침"],
+  stairs: ["계단","층계","난간"],
+  // ── imported.ts 확장: 엘리베이터/화장실/거울/아기/지진/피/비/눈/공항/반지 등
+  // duplicates with earlier keys removed to avoid collisions
+  // duplicate merged into the primary 'earthquake' entry above
+  blood_signal: ["피","피가","출혈","빨강","선혈"],
+  heavy_rain: ["비","폭우","소나기","비바람"],
+  snow_white: ["눈","하양","하얀","흰색","백설"],
+  airport_passport: ["공항","게이트","여권","탑승권","보안검색"],
+  dog_bite: ["개","강아지","물림","깨물"],
+  snake_skin: ["뱀","탈피","허물","비늘"],
+  // ── 도메인/일반 범주 ──
+  domain_relationship: ["연인","남친","여친","배우자","부부","가족","엄마","아빠","어머니","아버지","친구","동료","선배","후배","헤어지","이별","화해","키스","섹스"],
+  domain_health: ["병원","의사","간호사","주사","수술","검사","검진","약","약국","두통","복통","기침","발열","코로나","감기"],
+  domain_work: ["회사","직장","업무","회의","보고서","상사","부장","팀장","동료","프로젝트","마감","야근"],
+  domain_school: ["학교","교실","선생","선생님","수업","숙제","시험","중간","기말","지각"],
+  domain_fear: ["귀신","유령","좀비","괴물","도깨비","공포","무섭","두려움"],
+  domain_travel: ["여행","비행기","기차","버스","배","공항","숙소","호텔","여권","탑승","출국","입국"],
+  domain_home: ["집","방","거실","침실","주방","창문","문","현관","베란다","청소","정리"],
+  domain_money: ["돈","지갑","카드","계좌","이체","대출","월세","연봉","보너스","지출","저축"],
+  domain_digital: ["핸드폰","휴대폰","스마트폰","폰","로그인","비번","비밀번호","아이디","계정","동기화","백업","알림","메신저","카톡","디엠","dm","스팸"],
+  domain_nature: ["비","눈","바람","폭우","태풍","한파","폭염","황사","미세먼지","번개","천둥","무지개","일출","일몰","해","달","별","바다","강","숲","산"],
+  // ── 범주 심볼 일반 키워드 ──
+  animal_pet: ["강아지","개","고양이","반려","펫","새끼"],
+  animal_wild: ["호랑이","사자","표범","곰","늑대","여우","코끼리","원숭이","사슴","멧돼지"],
+  bird_generic: ["새","비둘기","참새","독수리","매","갈매기","까마귀"],
+  fish_generic: ["물고기","생선","고래","상어","돌고래","잉어","금붕어","문어","오징어"],
+  insect_generic: ["곤충","벌","나비","모기","파리","개미","거미","사마귀","바퀴벌레"],
+  vehicle_car: ["자동차","차","승용","SUV","운전"],
+  vehicle_bus: ["버스","시내버스","고속버스","셔틀"],
+  vehicle_train: ["기차","지하철","KTX","전철"],
+  vehicle_bike: ["자전거","자전거타"],
+  vehicle_plane: ["비행기","항공기","비행"],
+  vehicle_ship: ["배","선박","유람선","보트"],
+  building_home: ["집","주택","단독","전원주택"],
+  building_apartment: ["아파트","오피스텔","빌라"],
+  building_office: ["사무실","오피스","회사 건물"],
+  building_school: ["학교","교실","캠퍼스"],
+  building_hospital2: ["병원","응급실","의원"],
+  building_market: ["시장","마트","백화점","편의점"],
+  building_temple2: ["사찰","절","암자"],
+  building_church2: ["교회","성당","성직"],
+  object_phone: ["핸드폰","휴대폰","스마트폰","폰","아이폰","갤럭시"],
+  object_laptop: ["노트북","컴퓨터","PC","맥북"],
+  object_camera: ["카메라","DSLR","미러리스","캠코더"],
+  object_book: ["책","서적","교재"],
+  object_pen: ["펜","볼펜","연필","사인펜"],
+  object_key2: ["열쇠","키"],
+  object_wallet2: ["지갑","카드","신용카드","현금카드"],
+  object_bag: ["가방","백팩","토트백","숄더백"],
+  object_clothes: ["옷","의류","셔츠","바지","치마","재킷","코트"],
+  object_jewelry: ["반지","목걸이","귀걸이","팔찌"],
+  food_generic: ["음식","밥","빵","과일","고기","면","라면"],
+  drink_water: ["물","생수","수돗물","정수"],
+  drink_alcohol: ["술","소주","맥주","와인","위스키"],
+  document_passport: ["여권","주민증","주민등록증","운전면허","티켓","탑승권"],
+  body_head: ["머리","두통","두피"],
+  body_hand: ["손","손가락","손바닥"],
+  body_foot: ["발","발가락","발뒤꿈치"],
+  injury_wound: ["상처","피멍","골절","찰과상","베임"],
 };
 
-export const KOR_CORRECTIONS: Array<[RegExp, string]> = [
-  // ...기존 오타/표현 보정 규칙 모두 포함...
-  // 1) '했' 관련 흔한 오타
-  [new RegExp(String.raw`(?<!\p{L})햇어요(?!\p{L})`, "gu"), "했어요"],
-  [new RegExp(String.raw`(?<!\p{L})햇어(?!\p{L})`, "gu"), "했어"],
-  [new RegExp(String.raw`(?<!\p{L})햇다(?!\p{L})`, "gu"), "했다"],
-  [new RegExp(String.raw`(?<!\p{L})햇는데(?!\p{L})`, "gu"), "했는데"],
-  [new RegExp(String.raw`(?<!\p{L})햇네(?!\p{L})`, "gu"), "했네"],
-
-  // 2) '봤' 관련
-  [new RegExp(String.raw`(?<!\p{L})봣어요(?!\p{L})`, "gu"), "봤어요"],
-  [new RegExp(String.raw`(?<!\p{L})봣어(?!\p{L})`, "gu"), "봤어"],
-  [new RegExp(String.raw`(?<!\p{L})봣다(?!\p{L})`, "gu"), "봤다"],
-
-  // 3) 색/불(등) 관련 오타
-  [new RegExp(String.raw`(?<!\p{L})빨간뷸(?!\p{L})`, "gu"), "빨간불"],
-  [new RegExp(String.raw`(?<!\p{L})파란뷸(?!\p{L})`, "gu"), "파란불"],
-  [new RegExp(String.raw`(?<!\p{L})초록뷸(?!\p{L})`, "gu"), "초록불"],
-  [new RegExp(String.raw`(?<!\p{L})빨강불(?!\p{L})`, "gu"), "빨간불"],
-  [new RegExp(String.raw`(?<!\p{L})파랑불(?!\p{L})`, "gu"), "파란불"],
-
-  // 4) '보였어요' 관련 격자 오타
-  [new RegExp(String.raw`(?<!\p{L})보였서요(?!\p{L})`, "gu"), "보였어요"],
-
-  // 5) 구어체/오타 → 표준 동사(먹다)
-  [new RegExp(String.raw`(?<!\p{L})머그래(?!\p{L})`, "gu"), "먹으래"],
-  [new RegExp(String.raw`(?<!\p{L})머거라(?!\p{L})`, "gu"), "먹어라"],
-  [new RegExp(String.raw`(?<!\p{L})머그라(?!\p{L})`, "gu"), "먹으라"],
-  [new RegExp(String.raw`(?<!\p{L})머겁시다(?!\p{L})`, "gu"), "먹읍시다"],
-
-  // 6) 영어 일상 표현 → 한국어 핵심 토큰
-  [new RegExp(String.raw`\bred\s*light\b`, "giu"), "빨간불"],
-  [new RegExp(String.raw`\bblue\s*light\b`, "giu"), "파란불"],
-  [new RegExp(String.raw`\bgreen\s*light\b`, "giu"), "초록불"],
-  [new RegExp(String.raw`\byellow\s*light\b`, "giu"), "노란불"],
-  [new RegExp(String.raw`\bwhite\s*light\b`, "giu"), "하얀빛"],
-  [new RegExp(String.raw`\borange\s*light\b`, "giu"), "주황불"],
-  [new RegExp(String.raw`\bpurple\s*light\b`, "giu"), "보랏빛"],
-  [new RegExp(String.raw`\bpink\s*light\b`, "giu"), "핑크빛"],
-  [new RegExp(String.raw`\bgray\s*light\b`, "giu"), "회색빛"],
-  [new RegExp(String.raw`\bgrey\s*light\b`, "giu"), "회색빛"],
-
-  // 7) '날아' vs 구어 '날라' 정규화
-  [new RegExp(String.raw`(?<!\p{L})날라갔어요(?!\p{L})`, "gu"), "날아갔어요"],
-  [new RegExp(String.raw`(?<!\p{L})날라갔다(?!\p{L})`, "gu"), "날아갔다"],
-  [new RegExp(String.raw`(?<!\p{L})날라가다(?!\p{L})`, "gu"), "날아가다"],
-  [new RegExp(String.raw`(?<!\p{L})날라감(?!\p{L})`, "gu"), "날아감"],
-
-  // 8) 노랑/노란 불 표기 통일
-  [new RegExp(String.raw`(?<!\p{L})노랑불(?!\p{L})`, "gu"), "노란불"],
-
-  // 9) 한국어 색 + 라이트 → 색빛/색불 정규화
-  [new RegExp(String.raw`보라\s*라이트`, "giu"), "보랏빛"],
-  [new RegExp(String.raw`자주(색)?\s*라이트`, "giu"), "보랏빛"],
-  [new RegExp(String.raw`빨간\s*라이트`, "giu"), "빨간불"],
-  [new RegExp(String.raw`파란\s*라이트`, "giu"), "파란불"],
-  [new RegExp(String.raw`초록\s*라이트`, "giu"), "초록불"],
-  [new RegExp(String.raw`하얀\s*라이트|흰\s*라이트`, "giu"), "하얀빛"],
-
-  // 10) 웃음 축약어/의성어 → 표준 토큰
-  [new RegExp(String.raw`하하+`, "giu"), "웃다"],
-  [new RegExp(String.raw`헤헤+`, "giu"), "웃다"],
-  [new RegExp(String.raw`ㅎㅎ+`, "giu"), "웃다"],
-  [new RegExp(String.raw`ㅋㅋ+`, "giu"), "웃다"],
-  [new RegExp(String.raw`웃었?어(요)?`, "giu"), "웃다"],
-  [new RegExp(String.raw`웃으며`, "giu"), "웃다"],
-
-  // 11) 러닝/달렸어 → 달리기 정규화
-  [new RegExp(String.raw`러?런닝`, "giu"), "달리기"],
-  [new RegExp(String.raw`러닝`, "giu"), "달리기"],
-  [new RegExp(String.raw`달렸?(다|어|어요)?`, "giu"), "달리기"],
-  [new RegExp(String.raw`달리며`, "giu"), "달리기"],
-];
+export const KOR_CORRECTIONS = BASE_KOR_CORRECTIONS;
 
 /**
  * 보정 테이블 적용
  * - normalizeText()를 먼저 통과한 문자열을 입력으로 가정
  */
 export function applyCorrections(normalizedLower: string): string {
-  let out = normalizedLower || "";
-  // 1) 일반 한/영 오타 및 표현 보정
-  for (const [re, rep] of KOR_CORRECTIONS) {
-    out = out.replace(re, rep);
-  }
-  // 2) 감정 표현 보정 (구어/속어/영문 → 핵심 한국어 토큰)
-  out = applyEmotionCorrections(out);
-  return out;
+  return baseApplyCorrections(normalizedLower);
 };
 
-const MERGED_SYMBOLS: Record<string, SymbolMeaning> = { ...SYMBOLS, ...EXTRA_SYMBOLS };
+const MERGED_SYMBOLS: Record<string, SymbolMeaning> = { ...SYMBOLS, ...EXTRA_SYMBOLS, ...IMPORTED_SYMBOLS };
 
 export function getMergedSymbols() {
   return MERGED_SYMBOLS;
@@ -201,6 +247,7 @@ export function getMergedSymbols() {
 let SERVER_ALIASES: Record<string, string[]> = {};
 export function setServerAliases(map: Record<string, string[]>) {
   SERVER_ALIASES = map || {};
+  try { rebuildAliasPatterns(); } catch {}
 }
 
 export function getMergedAliases() {
@@ -252,14 +299,11 @@ export function refreshAliasPatterns() { /* no-op */ }
  * - 대소문자 무시 (영문 섞인 경우)
  */
 export function normalizeText(input: string): string {
-  return (input || "")
-    .normalize("NFKC")
-    .toLowerCase();
+  return baseNormalizeText(input);
 }
 
 export function preprocessDreamText(input: string): string {
-  const norm = normalizeText(input);
-  return applyEmotionCorrections(norm);
+  return basePreprocessDreamText(input);
 }
 
 /**
@@ -269,114 +313,25 @@ export function preprocessDreamText(input: string): string {
  */
 // (중복, 불완전 선언 제거됨)
 
-// 4.a) 감정 보정 테이블 (KOR_CORRECTIONS 바깥에 위치)
-const EMOTION_CORRECTIONS: Array<[RegExp, string]> = [
-  // ── 슬픔/우울 계열 → "우울"
-  [new RegExp(String.raw`(?<!\p{L})울적(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})침울(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})멜랑콜리(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})멜랑꼴리(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})다운됨?(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`기분\s*이?\s*다운`, "giu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})슬펐?다?(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`\bdepress(ed|ing)?\b`, "giu"), "우울"],
-  [new RegExp(String.raw`\bsad(ness)?\b`, "giu"), "우울"],
-  [new RegExp(String.raw`feeling\s*blue`, "giu"), "우울"],
-
-  // ── 불안/초조 계열 → "불안"
-  [new RegExp(String.raw`(?<!\p{L})초조(?!\p{L})`, "gu"), "불안"],
-  [new RegExp(String.raw`(?<!\p{L})조급(?!\p{L})`, "gu"), "불안"],
-  [new RegExp(String.raw`(?<!\p{L})걱정(?!\p{L})`, "gu"), "불안"],
-  [new RegExp(String.raw`(?<!\p{L})근심(?!\p{L})`, "gu"), "불안"],
-  [new RegExp(String.raw`(?<!\p{L})긴장(?!\p{L})`, "gu"), "불안"],
-  [new RegExp(String.raw`\banxious(ness)?\b`, "giu"), "불안"],
-  [new RegExp(String.raw`\bnervous(ness)?\b`, "giu"), "불안"],
-  [new RegExp(String.raw`\banxiety\b`, "giu"), "불안"],
-
-  // ── 두려움/공포 계열 → "두려움"
-  [new RegExp(String.raw`(?<!\p{L})무서웠?다?(?!\p{L})`, "gu"), "두려움"],
-  [new RegExp(String.raw`(?<!\p{L})겁났?다?(?!\p{L})`, "gu"), "두려움"],
-  [new RegExp(String.raw`(?<!\p{L})두려웠?다?(?!\p{L})`, "gu"), "두려움"],
-  [new RegExp(String.raw`(?<!\p{L})공포\s*스?러웠?다?(?!\p{L})`, "gu"), "두려움"],
-  [new RegExp(String.raw`\bscared\b`, "giu"), "두려움"],
-  [new RegExp(String.raw`\bafraid\b`, "giu"), "두려움"],
-  [new RegExp(String.raw`\bterrified\b`, "giu"), "두려움"],
-  [new RegExp(String.raw`\bfear\b`, "giu"), "두려움"],
-
-  // ── 분노/짜증 계열 → "분노"
-  [new RegExp(String.raw`(?<!\p{L})화났?다?(?!\p{L})`, "gu"), "분노"],
-  [new RegExp(String.raw`(?<!\p{L})짜증(?!\p{L})`, "gu"), "분노"],
-  [new RegExp(String.raw`(?<!\p{L})열받(았|았어|았어요|음)?(?!\p{L})`, "gu"), "분노"],
-  [new RegExp(String.raw`(?<!\p{L})빡쳤?다?(?!\p{L})`, "gu"), "분노"],
-  [new RegExp(String.raw`(?<!\p{L})성났?다?(?!\p{L})`, "gu"), "분노"],
-  [new RegExp(String.raw`\bangry\b`, "giu"), "분노"],
-  [new RegExp(String.raw`\bfurious\b`, "giu"), "분노"],
-  [new RegExp(String.raw`\bmad\b`, "giu"), "분노"],
-
-  // ── 기쁨/행복/설렘 계열 → "기쁨"
-  [new RegExp(String.raw`(?<!\p{L})행복했?다?(?!\p{L})`, "gu"), "기쁨"],
-  [new RegExp(String.raw`(?<!\p{L})즐거웠?다?(?!\p{L})`, "gu"), "기쁨"],
-  [new RegExp(String.raw`(?<!\p{L})신났?다?(?!\p{L})`, "gu"), "기쁨"],
-  [new RegExp(String.raw`(?<!\p{L})기뻤?다?(?!\p{L})`, "gu"), "기쁨"],
-  [new RegExp(String.raw`(?<!\p{L})설렜?다?(?!\p{L})`, "gu"), "기쁨"],
-  [new RegExp(String.raw`\bhappy\b`, "giu"), "기쁨"],
-  [new RegExp(String.raw`\bjoy(ful|)\b`, "giu"), "기쁨"],
-  [new RegExp(String.raw`\bdelight(ed|ful)?\b`, "giu"), "기쁨"],
-  [new RegExp(String.raw`\bexcited\b`, "giu"), "기쁨"],
-
-  // ── 평온/차분/안정 계열 → "차분"
-  [new RegExp(String.raw`(?<!\p{L})편안(?!\p{L})`, "gu"), "차분"],
-  [new RegExp(String.raw`(?<!\p{L})평온(?!\p{L})`, "gu"), "차분"],
-  [new RegExp(String.raw`(?<!\p{L})차분(?!\p{L})`, "gu"), "차분"],
-  [new RegExp(String.raw`(?<!\p{L})안정감(?!\p{L})`, "gu"), "차분"],
-  [new RegExp(String.raw`\bcalm\b`, "giu"), "차분"],
-  [new RegExp(String.raw`\bpeaceful\b`, "giu"), "차분"],
-  [new RegExp(String.raw`\bserene\b`, "giu"), "차분"],
-
-  // ── 후련/안도/안심 계열 → "안도"
-  [new RegExp(String.raw`(?<!\p{L})후련(?!\p{L})`, "gu"), "안도"],
-  [new RegExp(String.raw`(?<!\p{L})안도(?!\p{L})`, "gu"), "안도"],
-  [new RegExp(String.raw`(?<!\p{L})안심(?!\p{L})`, "gu"), "안도"],
-  [new RegExp(String.raw`\breliev(ed|ing)?\b`, "giu"), "안도"],
-
-  // ── 수치/부끄/민망 계열 → "수치"
-  [new RegExp(String.raw`(?<!\p{L})부끄(럽|러웠?다?)?`, "gu"), "수치"],
-  [new RegExp(String.raw`(?<!\p{L})민망(했?다?)?`, "gu"), "수치"],
-  [new RegExp(String.raw`(?<!\p{L})창피(했?다?)?`, "gu"), "수치"],
-  [new RegExp(String.raw`(?<!\p{L})쪽팔(림|렸?다?)?`, "gu"), "수치"],
-  [new RegExp(String.raw`\bashamed\b`, "giu"), "수치"],
-  [new RegExp(String.raw`\bembarrass(ed|ing)?\b`, "giu"), "수치"],
-
-  // ── 죄책/미안 계열 → "죄책감"
-  [new RegExp(String.raw`(?<!\p{L})죄책(감)?(?!\p{L})`, "gu"), "죄책감"],
-  [new RegExp(String.raw`(?<!\p{L})양심\s*찔림(?!\p{L})`, "gu"), "죄책감"],
-  [new RegExp(String.raw`(?<!\p{L}) 미안(함|해서|했어|했어요)?(?!\p{L})`, "gu"), "죄책감"],
-  [new RegExp(String.raw`\bguilt(y|)\b`, "giu"), "죄책감"],
-
-  // ── 외로움/고독/쓸쓸 → "우울"
-  [new RegExp(String.raw`(?<!\p{L})외로움?(?!\p{L})`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})고독(했?다?)?`, "gu"), "우울"],
-  [new RegExp(String.raw`(?<!\p{L})쓸쓸(했?다?)?`, "gu"), "우울"],
-  [new RegExp(String.raw`\blonely\b`, "giu"), "우울"],
-];
-
 // 감정 보정 적용 함수가 이미 정의되어 있는지 확인 후, 없으면 추가
 // (아래에 이미 정의되어 있지 않으면 추가)
 // 이미 있는 경우 추가하지 않음
 export function applyEmotionCorrections(normalizedLower: string): string {
-  let out = normalizedLower || "";
-  for (const [re, rep] of EMOTION_CORRECTIONS) {
-    out = out.replace(re, rep);
-  }
-  return out;
+  return baseApplyEmotionCorrections(normalizedLower);
 }
 
-/** 오타 보정 적용 */
+/** 사전 기본 보정 이후 추가 슬랭/강조어 정리 */
 function applyKorCorrections(normalizedLower: string): string {
-  let out = normalizedLower || "";
-  for (const [re, rep] of KOR_CORRECTIONS) {
-    out = out.replace(re, rep);
-  }
+  let out = applyCorrections(normalizedLower || "");
+  // Remove intensifier prefixes like '개/존나/겁나/엄청/완전' before words
+  try {
+    out = out.replace(
+      new RegExp(String.raw`(?<!\p{L})(개|존나|졸|겁나|오지게|드럽게|엄청|진짜|완전|되게)(?=\s*\p{L})`, "gu"),
+      ""
+    );
+  } catch {}
+  // Remove chat fillers
+  out = out.replace(/\b(ㄹㅇ|ㄱㄱ|ㄷㄷ|ㅇㅋ|ㅇㅇ|ㄴㄴ|ㅁㄹ|z+|zz)\b/gi, " ");
   return out;
 }
 
@@ -392,9 +347,7 @@ export function isSkippableAlias(norm: string): boolean {
 // 4.d) 통합 전처리 — 외부 analyzeDream()에서 사용
 export function preprocessForMatching(raw: string): string {
   const n = normalizeText(raw);
-  const afterEmotion = applyEmotionCorrections(n);
-  const afterKor = applyKorCorrections(afterEmotion);
-  return afterKor;
+  return applyKorCorrections(n);
 }
 
 // 4.c) 스톱워드 & 스킵 규칙
@@ -473,14 +426,13 @@ function fuzzyIncludes(dreamText: string, alias: string, maxDistance = 1): boole
 }
 
 /**
- * KOR_ALIASES를 기반으로 공백 무시/내성 있는 정규식 패턴 테이블 생성
+ * 별칭 패턴 테이블 생성/재컴파일 지원
  */
-const MERGED_ALIASES = getMergedAliases();
-export const KOR_ALIAS_PATTERNS: Record<string, RegExp[]> = (() => {
+function buildAliasPatterns(): Record<string, RegExp[]> {
+  const merged = getMergedAliases();
   const out: Record<string, RegExp[]> = {};
-  for (const key of Object.keys(MERGED_ALIASES)) {
-    const list = MERGED_ALIASES[key] || [];
-    // 원형 라벨도 보너스로 포함 (예: SYMBOLS[key].label의 주요 단어)
+  for (const key of Object.keys(merged)) {
+    const list = merged[key] || [];
     const bonus: string[] = [];
     const baseLabel = (MERGED_SYMBOLS[key]?.label || "").split(/\//).join(" ");
     if (baseLabel) bonus.push(baseLabel);
@@ -489,21 +441,25 @@ export const KOR_ALIAS_PATTERNS: Record<string, RegExp[]> = (() => {
     [...list, ...bonus].forEach((t) => {
       const norm = normalizeText(t);
       if (!norm) return;
-
-      // 원형과 붙여쓰기 두 형태 모두 고려
       const variants = [norm, norm.replace(/\s+/g, "")];
-
       for (const v of variants) {
         if (!v) continue;
-        if (isSkippableAlias(v)) continue; // 3자 미만/스톱워드 스킵
+        if (isSkippableAlias(v)) continue;
         uniq.add(v);
       }
     });
-
     out[key] = Array.from(uniq).map((t) => makeOptionalSpaceRegex(t));
   }
   return out;
-})();
+}
+
+let KOR_ALIAS_PATTERNS: Record<string, RegExp[]> = buildAliasPatterns();
+export function rebuildAliasPatterns() {
+  KOR_ALIAS_PATTERNS = buildAliasPatterns();
+}
+export function getAliasPatterns() {
+  return KOR_ALIAS_PATTERNS;
+}
 
 /**
  * 주어진 텍스트에서 어떤 심볼 키들이 포착되는지 반환
@@ -514,7 +470,7 @@ export function matchAliasKeys(text: string): string[] {
   const src = applyCorrections(normalizeText(text || ""));
   const hits: string[] = [];
 
-  for (const [key, regs] of Object.entries(KOR_ALIAS_PATTERNS)) {
+  for (const [key, regs] of Object.entries(getAliasPatterns())) {
     // 1) 우선: 공백 무시/줄바꿈 내성 정규식으로 빠른 매칭
     if (regs.some((re) => re.test(src))) {
       hits.push(key);
@@ -531,8 +487,50 @@ export function matchAliasKeys(text: string): string[] {
         break;
       }
     }
+
+    // 3) 그래도 실패 시: n-gram 자카드 유사도(문자 3그램)로 근사 매칭
+    if (!hits.includes(key)) {
+      const textNoSpace = src.replace(/\s+/g, "");
+      const tgrams = toNGrams(textNoSpace, 3);
+      const candList: string[] = [
+        ...(KOR_ALIASES[key] || []),
+        (MERGED_SYMBOLS[key]?.label || ""),
+        ...(MERGED_SYMBOLS[key]?.tags || [])
+      ].filter(Boolean) as string[];
+      for (const cand of candList) {
+        const c = normalizeText(cand).replace(/\s+/g, "");
+        if (isSkippableAlias(c) || c.length < 4) continue;
+        const cgrams = toNGrams(c, 3);
+        const j = jaccard(tgrams, cgrams);
+        if (j >= 0.6) { // 보수적 임계치
+          hits.push(key);
+          break;
+        }
+      }
+    }
   }
   return Array.from(new Set(hits));
+}
+
+/** n-gram 집합 생성 (기본 3그램) */
+function toNGrams(s: string, n = 3): Set<string> {
+  const out = new Set<string>();
+  const L = s.length;
+  if (L === 0) return out;
+  const nn = Math.max(1, Math.min(n, L));
+  for (let i = 0; i <= L - nn; i++) out.add(s.slice(i, i + nn));
+  return out;
+}
+
+/** 자카드 유사도 */
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  const small = a.size < b.size ? a : b;
+  const big = a.size < b.size ? b : a;
+  for (const x of small) if (big.has(x)) inter++;
+  const union = a.size + b.size - inter;
+  return union > 0 ? inter / union : 0;
 }
 
 /**

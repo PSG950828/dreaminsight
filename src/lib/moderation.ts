@@ -5,16 +5,23 @@ export type Violation = {
   reason: string;
 };
 
+// 문자열 토큰(부분일치) — 비교적 안전한 것만 유지
 const PROFANITY = [
   // Common Korean profanities/slurs (non-exhaustive, minimized)
-  '씨발', '씨팔', 'ㅅㅂ', 'ㅄ', '개새', '병신', 'ㅂㅅ', '꺼져', '좆', '좇', '새끼', '미친놈', '년', 'ㄴㅇㄱ',
+  '씨발', '씨팔', 'ㅅㅂ', 'ㅄ', '개새', '병신', 'ㅂㅅ', '꺼져', '좆', '좇', '새끼', '미친놈', 'ㄴㅇㄱ',
   // Hate/offensive categories (avoid overblocking; keep obvious forms)
   '일베', '씹', '니애미', '니엄마', '애미', '애비',
 ];
 
-const HATE = [
+// 정규식(경계/문맥 고려)
+const HATE_RE: RegExp[] = [
   // Caution: keep only explicit hateful expressions (avoid identity words)
-  '병신같', '찌질', '정신병자', '지능이', '거지같',
+  /병신같/,
+  /찌질/,
+  /정신병자/,
+  /거지같/,
+  // 모욕적 '년' 조합만 필터 (일반 '몇 년' 등은 허용)
+  /(미친|개|썅|죽일|더러운)\s*년/,
 ];
 
 const SPAM_PHRASES = [
@@ -57,7 +64,7 @@ export function detectViolations(raw: string): Violation[] {
 
   // Profanity / hate
   if (PROFANITY.some(k => t.includes(k))) out.push({ code: 'profanity', reason: '욕설/비속어' });
-  if (HATE.some(k => t.includes(k))) out.push({ code: 'hate', reason: '모욕/혐오 표현' });
+  if (HATE_RE.some(re => re.test(t))) out.push({ code: 'hate', reason: '모욕/혐오 표현' });
 
   return out;
 }
@@ -69,4 +76,3 @@ export function moderateText(raw: string): { ok: boolean; violations: Violation[
   const shouldReject = v.some(x => rejectCodes.has(x.code));
   return { ok: !shouldReject, violations: v };
 }
-

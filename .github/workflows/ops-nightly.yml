@@ -1,0 +1,106 @@
+name: Ops Nightly — Health + KPIs
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 02:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ops-nightly
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: dev/dreaminsight
+    env:
+      BASE_URL: ${{ secrets.OPS_BASE_URL }}
+      ADMIN_PASSWORD: ${{ secrets.OPS_ADMIN_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dev/dreaminsight/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Coverage Ingest (recommended)
+        env:
+          DAYS: ${{ vars.OPS_COVERAGE_DAYS || '14' }}
+          LIMIT: ${{ vars.OPS_COVERAGE_LIMIT || '500' }}
+          MIN: ${{ vars.OPS_COVERAGE_MIN || '3' }}
+        run: |
+          if [ -n "$BASE_URL" ] && [ -n "$ADMIN_PASSWORD" ]; then \
+            echo "[nightly] coverage ingest: days=$DAYS limit=$LIMIT min=$MIN"; \
+            DAYS=$DAYS LIMIT=$LIMIT MIN=$MIN npm run -s ops:coverage:ingest || true; \
+          else \
+            echo "[nightly] skip coverage ingest (missing BASE_URL or ADMIN_PASSWORD)"; \
+          fi
+
+      - name: Health & Backups
+        run: npm run ops:health
+
+      - name: Fetch KPIs (7d)
+        id: kpi
+        env:
+          THR_UNKNOWN: ${{ vars.KPI_THR_UNKNOWN || '0.15' }}
+          THR_FAIL: ${{ vars.KPI_THR_UPLOAD_FAIL || '0.10' }}
+        run: |
+          set -e
+          J=$(curl -s "$BASE_URL/api/stats/kpi?days=7" || echo '{}')
+          UNK=$(echo "$J" | jq -r '.unknownRate // -1')
+          UNKT=$(echo "$J" | jq -r '.unknownTotal // 0')
+          UPS=$(echo "$J" | jq -r '.upload.ok // 0')
+          UPF=$(echo "$J" | jq -r '.upload.fail // 0')
+          FB=$(echo "$J" | jq -r '(.upload.failBreakdown // {}) | to_entries | sort_by(-.value) | .[0:2] | map("\(.key):\(.value)") | join(", ")')
+          FR=$(echo "$J" | jq -r '.upload.failRate // ""')
+          if [ -n "$FR" ] && [ "$FR" != "" ]; then FAILRATE="$FR"; else TOT=$((UPS+UPF)); if [ "$TOT" -gt 0 ]; then FAILRATE=$(python3 - <<PY
+tot=$TOT; upf=$UPF
+print(round(upf/tot,3))
+PY
+          ); else FAILRATE=-1; fi; fi
+          ALERT=0
+          awk -v t="$THR_UNKNOWN" "BEGIN{if($UNK>t) exit 0; exit 1}" >/dev/null 2>&1 && ALERT=1
+          if [ "$FAILRATE" != "-1" ]; then awk -v t="$THR_FAIL" "BEGIN{if($FAILRATE>t) exit 0; exit 1}" >/dev/null 2>&1 && ALERT=1; fi
+          TXT="unknownRate=$( [ "$UNK" = "-1" ] && echo N/A || echo $UNK ), unknown=$UNKT, upload ok=$UPS, fail=$UPF$( [ "$FAILRATE" = "-1" ] && echo '' || echo ", failRate=$FAILRATE" )$( [ -n "$FB" ] && echo ", failTop: $FB" )"
+          echo "kpi_text=$TXT" >> $GITHUB_OUTPUT
+          echo "kpi_alert=$ALERT" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "# Nightly Health & KPIs" >> $GITHUB_STEP_SUMMARY
+          echo "Base: $BASE_URL" >> $GITHUB_STEP_SUMMARY
+          echo "KPI(7d): ${{ steps.kpi.outputs.kpi_text }}" >> $GITHUB_STEP_SUMMARY
+          echo "Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Slack (optional)
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MENTION: ${{ vars.SLACK_ONCALL_MENTION || '' }}
+        run: |
+          KPI_ICON=""; [ "${{ steps.kpi.outputs.kpi_alert }}" = "1" ] && KPI_ICON=" ⚠️"
+          MENTION="$SLACK_MENTION"; [ -z "$MENTION" ] && MENTION=""
+          TEXT="${MENTION} 🌙 Nightly — Health OK & Backups\nBase: $BASE_URL\nKPI(7d)${KPI_ICON}: ${{ steps.kpi.outputs.kpi_text }}"
+          curl -s -X POST -H 'Content-type: application/json' --data "$(jq -nc --arg text "$TEXT" '{text:$text}')" "$SLACK_WEBHOOK_URL"
+
+      - name: Create KPI Alert Issue (optional)
+        if: ${{ steps.kpi.outputs.kpi_alert == '1' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Nightly KPI alert: ${process.env.GITHUB_RUN_ID}`;
+            const body = [
+              `Base: ${process.env.BASE_URL}`,
+              `KPI(7d): ${{ steps.kpi.outputs.kpi_text }}`,
+              `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            ].join('\n');
+            const labels = ['ops','incident'];
+            await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body, labels });

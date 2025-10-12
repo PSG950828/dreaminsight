@@ -161,3 +161,37 @@ create table if not exists admin_aliases (
 );
 alter table admin_aliases enable row level security;
 -- no select policy for anon; only service role via API should access
+
+-- Personal dream journals (server-side storage)
+create table if not exists journals (
+  id uuid primary key default gen_random_uuid(),
+  user_uid text not null,
+  text text not null,
+  analysis jsonb null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table journals enable row level security;
+
+-- Service role only policies for server API access
+drop policy if exists select_journals_service_only on journals;
+drop policy if exists insert_journals_service_only on journals;
+drop policy if exists delete_journals_service_only on journals;
+create policy select_journals_service_only on journals for select using (auth.role() = 'service_role');
+create policy insert_journals_service_only on journals for insert with check (auth.role() = 'service_role');
+create policy delete_journals_service_only on journals for delete using (auth.role() = 'service_role');
+
+-- Trigger to keep updated_at fresh
+create or replace function set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_journals_updated on journals;
+create trigger trg_journals_updated
+before update on journals
+for each row execute function set_updated_at();

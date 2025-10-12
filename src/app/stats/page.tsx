@@ -5,6 +5,7 @@ import { getMergedSymbols, refreshAliasPatterns } from "@/lib/dictionary";
 import { loadUserAliases, upsertUserAliases } from "@/lib/dictStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Bucket = { label: string; count: number };
 
@@ -33,7 +34,7 @@ function Bar({ items, prevMap, onLabelClick }: { items: Bucket[]; prevMap?: Reco
             <div className="h-2 bg-zinc-500/70 dark:bg-zinc-300/70" style={{ width: `${Math.round((it.count/peak)*100)}%` }} />
           </div>
         </div>
-      );})}
+        );})}
       {top.length === 0 && <div className="text-xs opacity-60">데이터 없음</div>}
     </div>
   );
@@ -51,10 +52,15 @@ export default function StatsPage() {
   const [prevAct, setPrevAct] = useState<Record<string, number>>({});
   const [upsell, setUpsell] = useState<{ opens: Bucket[]; subscribes: Bucket[] } | null>(null);
   const [checkout, setCheckout] = useState<{ starts: Bucket[]; successes: Bucket[] } | null>(null);
+  const [uploads, setUploads] = useState<{ successes: Bucket[]; fails: Bucket[]; all: Bucket[] } | null>(null);
+  const [funnel, setFunnel] = useState<{ upsell: { open: Bucket[]; click: Bucket[] }; referral: { start: Bucket[] }; checkout: { start: number; success: number; startByPlan: Bucket[]; successByPlan: Bucket[] } } | null>(null);
+  const [series, setSeries] = useState<{ symbols: Record<string, number[]>; suggestions: Record<string, number[]>; actions: Record<string, number[]>; uploads?: Record<string, number[]>; dayLabels: string[]; hours: { symbol: number[]; suggestion: number[]; 'action.done': number[]; upload?: number[] }; hoursByLabel: { symbol: Record<string, number[]>; suggestion: Record<string, number[]>; 'action.done': Record<string, number[]>; upload?: Record<string, number[]> } } | null>(null);
+  const [kpis, setKpis] = useState<{ unknownTotal: number; suggestionTotal: number; symbolTotal: number; unknownRate: number; noiseTotal?: number } | null>(null);
   const [ency, setEncy] = useState<{ opens: Bucket[]; starts: Bucket[] } | null>(null);
   const [upsellSeries, setUpsellSeries] = useState<{ dayLabels: string[]; openByContext: Record<string, number[]>; subscribeByContext: Record<string, number[]>; hours: { open:number[]; subscribe:number[] } } | null>(null);
   const [checkoutSeries, setCheckoutSeries] = useState<{ dayLabels: string[]; success: { day: number[]; month: number[] }; ratio: number[] } | null>(null);
   const [abSeries, setAbSeries] = useState<{ dayLabels: string[]; open: {A:number[];B:number[]}; subscribe:{A:number[];B:number[]}; rate:{A:number[];B:number[];delta:number[]} } | null>(null);
+  const [backups, setBackups] = useState<{ db: Array<{ path:string; url:string|null }>; storage: Array<{ path:string; url:string|null }> }|null>(null);
   // 우선 개선 임계치
   const [prioMinOpen, setPrioMinOpen] = useState<number>(50);
   const [prioMinDiff, setPrioMinDiff] = useState<number>(5);
@@ -74,7 +80,6 @@ export default function StatsPage() {
     try { localStorage.setItem('di.stats.prio', JSON.stringify({ open: prioMinOpen, diff: prioMinDiff })); } catch {}
   }, [prioMinOpen, prioMinDiff]);
   const [loading, setLoading] = useState(false);
-  const [series, setSeries] = useState<{ symbols: Record<string, number[]>; suggestions: Record<string, number[]>; actions: Record<string, number[]>; dayLabels: string[]; hours: { symbol: number[]; suggestion: number[]; 'action.done': number[] }; hoursByLabel: { symbol: Record<string, number[]>; suggestion: Record<string, number[]>; 'action.done': Record<string, number[]> } } | null>(null);
   const [filter, setFilter] = useState("");
   const [detail, setDetail] = useState<{ type: 'symbol'|'suggestion'|'action.done'; label: string } | null>(null);
   const [alias, setAlias] = useState("");
@@ -82,6 +87,31 @@ export default function StatsPage() {
   const [syncBusy, setSyncBusy] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [topCombos, setTopCombos] = useState<Array<{ label: string; count: number }>>([]);
+  // Toast
+  const [toast, setToast] = useState<string>("");
+  const [toastAt, setToastAt] = useState<number>(0);
+  function showToast(msg: string) { setToast(msg); setToastAt(Date.now()); setTimeout(()=> setToast(''), 2500); }
+  // Health state
+  const [health, setHealth] = useState<any>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  async function runHealth() {
+    try { const r = await fetch('/api/admin/health'); const j = await r.json(); if (r.ok) setHealth(j); else showToast('환경 점검 실패'); } catch { showToast('환경 점검 오류'); }
+  }
+  async function runOneClickBackup() {
+    if (!confirm('원클릭 백업을 실행할까요? (최근 30일: DB 스냅샷 + 스토리지 매니페스트)')) return;
+    try {
+      const r1 = await fetch('/api/admin/backup/db?days=30', { method: 'POST' });
+      const j1 = await r1.json();
+      const r2 = await fetch('/api/admin/backup/storage?days=30', { method: 'POST' });
+      const j2 = await r2.json();
+      if (r1.ok && r2.ok) showToast(`백업 완료: DB ${j1.files?.length||0} / Storage posts ${j2.withFiles||0}`);
+      else showToast('원클릭 백업 일부 실패');
+    } catch { showToast('원클릭 백업 오류'); }
+  }
+  // 동의어 제안(텍스트 기반)
+  const [sampleText, setSampleText] = useState("");
+  const [suggested, setSuggested] = useState<string[]>([]);
+  const [suggestBusy, setSuggestBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -95,19 +125,31 @@ export default function StatsPage() {
         setAct(filt(j.actions || []));
         setUpsell(j.upsell || null);
         setCheckout(j.checkout || null);
+        setUploads(j.uploads || null);
         setEncy(j.encyclopedia || null);
         setUpsellSeries(j.upsellSeries || null);
         setCheckoutSeries(j.checkoutSeries || null);
         setAbSeries(j.abSeries || null);
+        setKpis(j.kpis || null);
         const toMap = (arr: Bucket[]) => Object.fromEntries((arr||[]).map((x:Bucket)=>[x.label, x.count] as const));
         setPrevSym(toMap(j.prev?.symbols || []));
         setPrevSug(toMap(j.prev?.suggestions || []));
         setPrevAct(toMap(j.prev?.actions || []));
         setSeries(j.series || null);
       }
+      // Funnel (upsell→checkout)
+      try {
+        const rf = await fetch(`/api/stats/funnel?days=${days}`);
+        const jf = await rf.json();
+        if (rf.ok) setFunnel(jf);
+      } catch {}
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadBackups() {
+    try { const r = await fetch('/api/admin/backup/list'); const j = await r.json(); if (r.ok) setBackups(j.backups || null); } catch {}
   }
 
   useEffect(()=>{ 
@@ -127,6 +169,7 @@ export default function StatsPage() {
 
   useEffect(()=>{ if (isAdmin) load(); }, [days, isAdmin]);
   useEffect(()=>{ if (isAdmin) load(); }, [filter]);
+  useEffect(()=>{ if (isAdmin) loadBackups(); }, [isAdmin]);
 
   async function login() {
     const r = await fetch('/api/me-admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
@@ -152,14 +195,28 @@ export default function StatsPage() {
       }
       try {
         localStorage.setItem('dreaminsight.admin.aliases.v1', JSON.stringify(map));
-        localStorage.setItem('dreaminsight.aliases.bump', String(Date.now()));
+        const now = Date.now();
+        localStorage.setItem('dreaminsight.aliases.bump', String(now));
         refreshAliasPatterns();
-        setLastSyncAt(Date.now());
+        setLastSyncAt(now);
+        showToast('동의어 동기화 완료(즉시 반영)');
       } catch {}
     } catch (e:any) {
       alert('동기화 오류: '+(e?.message||e));
     } finally {
       setSyncBusy(false);
+    }
+  }
+
+  async function suggestFromText() {
+    setSuggestBusy(true);
+    try {
+      const r = await fetch('/api/dictionary/suggest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: sampleText }) });
+      const j = await r.json();
+      if (!r.ok) { alert(j?.error || '제안 실패'); return; }
+      setSuggested(j.candidates || []);
+    } finally {
+      setSuggestBusy(false);
     }
   }
 
@@ -195,9 +252,16 @@ export default function StatsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 text-zinc-900 dark:text-zinc-50">
       <div className="max-w-3xl mx-auto px-4 py-6 sm:py-10 space-y-4">
+        {toast && (
+          <div key={toastAt} className="fixed top-3 right-3 z-50 px-3 py-2 text-xs rounded-md bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow">
+            {toast}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold tracking-tight">DreamInsight — 서버 텔레메트리</h1>
           <div className="flex items-center gap-2 text-sm">
+            <Button size="sm" variant="secondary" onClick={()=> setHelpOpen(true)}>도움말</Button>
+            <Link href="/admin/coverage" className="px-3 py-1.5 rounded-md border">Coverage</Link>
             <span className="opacity-70">기간</span>
             <select className="bg-transparent border rounded-md px-2 py-1" value={days} onChange={(e)=>setDays(parseInt(e.target.value)||30)}>
               <option value={7}>최근 7일</option>
@@ -264,11 +328,72 @@ export default function StatsPage() {
             )}
             <Button size="sm" variant="secondary" onClick={syncServerAliases} disabled={syncBusy}>{syncBusy ? '동기화…' : '동의어 동기화'}</Button>
             {lastSyncAt && <span className="opacity-60">최근 동기화 {new Date(lastSyncAt).toLocaleString()}</span>}
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              if (!confirm('DB 백업을 시작할까요? (최근 30일, 수동 실행)')) return;
+              try {
+                const r = await fetch('/api/admin/backup/db?days=30', { method: 'POST' });
+                const j = await r.json();
+                if (r.ok) showToast(`백업 완료: ${j.files?.length||0}개 파일`);
+                else alert('백업 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('백업 오류: ' + (e?.message || e)); }
+            }}>DB 백업(수동)</Button>
+            <Button size="sm" variant="secondary" onClick={runOneClickBackup}>원클릭 백업(30일)</Button>
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              if (!confirm('스토리지 매니페스트를 생성할까요? (최근 30일, 수동 실행)')) return;
+              try {
+                const r = await fetch('/api/admin/backup/storage?days=30', { method: 'POST' });
+                const j = await r.json();
+                if (r.ok) showToast(`스토리지 매니페스트 완료: ${j.withFiles||0}개 post`);
+                else alert('매니페스트 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('매니페스트 오류: ' + (e?.message || e)); }
+            }}>스토리지 매니페스트</Button>
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              try {
+                const r = await fetch('/api/admin/backup/list');
+                const j = await r.json();
+                if (r.ok) {
+                  const db = (j.backups?.db||[]).length;
+                  const st = (j.backups?.storage||[]).length;
+                  showToast(`백업 파일 — DB:${db}, Storage:${st}`);
+                } else alert('백업 목록 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('백업 목록 오류: ' + (e?.message || e)); }
+            }}>백업 목록</Button>
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              if (!confirm('오래된 백업을 정리할까요? (90일 이전 삭제)')) return;
+              try {
+                const r = await fetch('/api/admin/backup/cleanup?days=90', { method: 'POST' });
+                const j = await r.json();
+                if (r.ok) showToast(`정리 완료: DB ${j.removedDbFiles||0} / Storage ${j.removedStorageFiles||0}`);
+                else alert('정리 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('정리 오류: ' + (e?.message || e)); }
+            }}>백업 정리(90일)</Button>
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              if (!confirm('스토리지 매니페스트를 생성할까요? (최근 30일, 수동 실행)')) return;
+              try {
+                const r = await fetch('/api/admin/backup/storage?days=30', { method: 'POST' });
+                const j = await r.json();
+                if (r.ok) showToast(`스토리지 매니페스트 완료: ${j.withFiles||0}개 post`);
+                else alert('매니페스트 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('매니페스트 오류: ' + (e?.message || e)); }
+            }}>스토리지 매니페스트</Button>
+            <Button size="sm" variant="secondary" onClick={async()=>{
+              try {
+                const r = await fetch('/api/admin/backup/list');
+                const j = await r.json();
+                if (r.ok) {
+                  const db = (j.backups?.db||[]).length;
+                  const st = (j.backups?.storage||[]).length;
+                  showToast(`백업 파일 — DB:${db}, Storage:${st}`);
+                } else alert('백업 목록 실패: ' + (j?.error || '오류'));
+              } catch (e:any) { alert('백업 목록 오류: ' + (e?.message || e)); }
+            }}>백업 목록</Button>
             <Button size="sm" variant="secondary" onClick={()=>{
               const rows: string[] = ['type,label,count'];
               sym.forEach(x=> rows.push(`symbol,${x.label},${x.count}`));
               sug.forEach(x=> rows.push(`suggestion,${x.label},${x.count}`));
               act.forEach(x=> rows.push(`action.done,${x.label},${x.count}`));
+              if (uploads) uploads.all.forEach(x=> rows.push(`upload,${x.label},${x.count}`));
+              if (kpis?.noiseTotal) rows.push(`parse,noise,${kpis.noiseTotal}`);
               const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a'); a.href = url; a.download = `stats-${days}d.csv`; a.click(); URL.revokeObjectURL(url);
@@ -285,6 +410,16 @@ export default function StatsPage() {
               push('symbol', series.symbols);
               push('suggestion', series.suggestions);
               push('action.done', series.actions);
+              if ((series as any).uploads) {
+                Object.entries((series as any).uploads).forEach(([label, arr]: any) => {
+                  rows.push(['upload', label, ...arr].join(','));
+                });
+              }
+              if ((series as any).parse) {
+                Object.entries((series as any).parse).forEach(([label, arr]: any) => {
+                  rows.push(['parse', label, ...arr].join(','));
+                });
+              }
               const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a'); a.href = url; a.download = `stats-series-${days}d.csv`; a.click(); URL.revokeObjectURL(url);
@@ -300,6 +435,8 @@ export default function StatsPage() {
               pushOverall('symbol', series.hours.symbol);
               pushOverall('suggestion', series.hours.suggestion);
               pushOverall('action.done', series.hours['action.done']);
+              if ((series.hours as any).upload) rows.push(['upload','overall', ...((series.hours as any).upload||[])].join(','));
+              if ((series.hours as any).parse) rows.push(['parse','overall', ...((series.hours as any).parse||[])].join(','));
               // top label hours (slice to 5 each)
               const pushByLabel = (t: 'symbol'|'suggestion'|'action.done', obj: Record<string, number[]>) => {
                 Object.entries(obj).slice(0,5).forEach(([label, _]) => {
@@ -310,12 +447,193 @@ export default function StatsPage() {
               pushByLabel('symbol', series.symbols);
               pushByLabel('suggestion', series.suggestions);
               pushByLabel('action.done', series.actions);
+              if ((series.hoursByLabel as any).upload && (series as any).uploads) {
+                Object.entries((series as any).uploads).slice(0,5).forEach(([label]: any)=>{
+                  const arr = ((series.hoursByLabel as any).upload||{})[label] || Array(24).fill(0);
+                  rows.push(['upload', label, ...arr].join(','));
+                });
+              }
+              if (series.hours.upload) rows.push(['upload','overall', ...(series.hours.upload||[])].join(','));
+              if ((series.hours as any).parse) rows.push(['parse','overall', ...((series.hours as any).parse||[])].join(','));
+              if (series.hoursByLabel.upload && series.uploads) {
+                Object.entries(series.uploads).slice(0,5).forEach(([label])=>{
+                  const arr = (series.hoursByLabel.upload||{})[label] || Array(24).fill(0);
+                  rows.push(['upload', label, ...arr].join(','));
+                });
+              }
               const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a'); a.href = url; a.download = `stats-hours-${days}d.csv`; a.click(); URL.revokeObjectURL(url);
             }}>CSV(시간대)</Button>
           </div>
         </div>
+        {kpis && (
+          <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+            <CardContent className="p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-sm">
+                <div>
+                  <div className="text-[11px] opacity-60">심볼 매치</div>
+                  <div className="text-lg font-semibold">{kpis.symbolTotal}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] opacity-60">미커버</div>
+                  <div className="text-lg font-semibold">{kpis.unknownTotal}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] opacity-60">미커버율</div>
+                  <div className="text-lg font-semibold">{kpis.unknownRate}%</div>
+                </div>
+                <div>
+                  <div className="text-[11px] opacity-60">저정보 입력</div>
+                  <div className="text-lg font-semibold">{kpis.noiseTotal || 0}</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>빠른 시작 — 운영 도움말</DialogTitle></DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div>
+                <b>1) 환경 점검</b>
+                <ul className="list-disc list-inside">
+                  <li>상단 “환경 점검(초보자용)” 카드에서 점검 실행 → 초록 불 확인</li>
+                  <li>필수 변수 누락/스토리지/RPC 에러는 카드의 권장 조치대로 해결</li>
+                </ul>
+              </div>
+              <div>
+                <b>2) 백업</b>
+                <ul className="list-disc list-inside">
+                  <li>“DB 백업(수동)”, “스토리지 매니페스트” 버튼으로 스냅샷 생성</li>
+                  <li>“백업 목록/정리(90일)”로 파일 확인·삭제</li>
+                </ul>
+              </div>
+              <div>
+                <b>3) 지표 확인</b>
+                <ul className="list-disc list-inside">
+                  <li>KPI: 심볼/미커버/미커버율/저정보 — 미커버율 ≤ 10–15% 유지</li>
+                  <li>시간대: 업로드/투표/신고/저정보 패턴 확인</li>
+                </ul>
+              </div>
+              <div>
+                <b>4) 사전 운영</b>
+                <ul className="list-disc list-inside">
+                  <li>“동의어 동기화”로 서버 동의어 즉시 반영(재컴파일)</li>
+                  <li>/admin/suggest에서 후보 저장 → /stats로 효과 확인</li>
+                </ul>
+              </div>
+              <div>
+                <b>5) 장애/롤백</b>
+                <ul className="list-disc list-inside">
+                  <li>앱 롤백: Vercel 이전 성공 배포로 복구</li>
+                  <li>데이터: DB 스냅샷 JSON으로 테이블 단위 복원</li>
+                </ul>
+              </div>
+              <div className="text-xs opacity-70">자세한 절차: DEPLOY_PLAYBOOK.md / OPERATIONS_CHECKLIST.md 참고</div>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+          <CardHeader className="pb-2"><CardTitle className="text-lg">환경 점검(초보자용)</CardTitle></CardHeader>
+          <CardContent className="text-sm space-y-2">
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={runHealth}>점검 실행</Button>
+              <div className="opacity-70 text-xs">필수 항목: Supabase URL/Key, Service Role, Storage, RPC</div>
+            </div>
+            {health ? (
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="font-medium">환경변수</div>
+                  {Object.entries(health.checks?.env || {}).map(([k,v]: any)=> (
+                    <div key={k} className="flex justify-between items-center">
+                      <span>{k}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] ${v? 'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>{v? 'OK':'MISSING'}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1">
+                  <div className="font-medium">스토리지</div>
+                  <div className="flex justify-between"><span>bucket</span><span>{health.checks?.storage?.bucket||'-'}</span></div>
+                  <div className="flex justify-between items-center"><span>access</span><span className={`px-2 py-0.5 rounded-full text-[11px] ${health.checks?.storage?.ok? 'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>{health.checks?.storage?.ok? 'OK':'FAIL'}</span></div>
+                </div>
+                <div className="space-y-1">
+                  <div className="font-medium">DB Count</div>
+                  {['posts','comments','reports','admin_aliases','entitlements','telemetry_events'].map((t)=> (
+                    <div key={t} className="flex justify-between"><span>{t}</span><span>{health.checks?.db?.[t]?.count ?? '-'}</span></div>
+                  ))}
+                </div>
+                <div className="space-y-1">
+                  <div className="font-medium">RPC</div>
+                  <div className="flex justify-between items-center"><span>list_posts</span><span className={`px-2 py-0.5 rounded-full text-[11px] ${health.checks?.rpc?.list_posts?.ok? 'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>{health.checks?.rpc?.list_posts?.ok? 'OK':'FAIL'}</span></div>
+                </div>
+                {Array.isArray(health.tips) && health.tips.length>0 && (
+                  <div className="col-span-2 p-2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                    <div className="font-medium mb-1">권장 조치</div>
+                    <ul className="list-disc list-inside">
+                      {health.tips.map((t:string,i:number)=>(<li key={i}>{t}</li>))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="opacity-70 text-xs">점검 실행을 눌러 환경 상태를 확인하세요.</div>
+            )}
+          </CardContent>
+        </Card>
+        {backups && (
+          <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+            <CardHeader className="pb-2"><CardTitle className="text-lg">백업 목록</CardTitle></CardHeader>
+            <CardContent className="text-sm space-y-3">
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={loadBackups}>새로고침</Button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">DB 스냅샷(최근 10개)</div>
+                  <div className="space-y-2 text-[12px]">
+                    {(backups.db||[]).slice(0,10).map((b,i)=>{
+                      const m = b.path.match(/backups\/db\/(.*?)\//);
+                      const stamp = m?.[1] || '';
+                      return (
+                        <div key={i} className="flex items-center gap-2">
+                          <a className="underline truncate" href={b.url||'#'} target="_blank" rel="noreferrer">{b.path}</a>
+                          {stamp && (
+                            <Button size="sm" variant="secondary" onClick={async()=>{
+                              if (!confirm(`DB 백업 삭제: ${stamp}?`)) return;
+                              try {
+                                const r = await fetch('/api/admin/backup/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prefix: `backups/db/${stamp}` }) });
+                                const j = await r.json(); if (r.ok) { showToast(`삭제 완료: ${j.removed||0}`); loadBackups(); } else alert('삭제 실패: '+(j?.error||'오류'));
+                              } catch (e:any) { alert('삭제 오류: '+(e?.message||e)); }
+                            }}>삭제</Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">스토리지 매니페스트(최근 10개)</div>
+                  <div className="space-y-2 text-[12px]">
+                    {(backups.storage||[]).slice(0,10).map((b,i)=> (
+                      <div key={i} className="flex items-center gap-2">
+                        <a className="underline truncate" href={b.url||'#'} target="_blank" rel="noreferrer">{b.path}</a>
+                        <Button size="sm" variant="secondary" onClick={async()=>{
+                          if (!confirm(`매니페스트 삭제: ${b.path}?`)) return;
+                          try {
+                            const r = await fetch('/api/admin/backup/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paths: [b.path] }) });
+                            const j = await r.json(); if (r.ok) { showToast(`삭제 완료: ${j.removed||0}`); loadBackups(); } else alert('삭제 실패: '+(j?.error||'오류'));
+                          } catch (e:any) { alert('삭제 오류: '+(e?.message||e)); }
+                        }}>삭제</Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {checkout && (
           <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
             <CardHeader className="pb-2"><CardTitle className="text-lg">결제 플로우 — 플랜별</CardTitle></CardHeader>
@@ -364,6 +682,95 @@ export default function StatsPage() {
                   const ratio = Math.round((mon/day)*1000)/10;
                   return <div>Day→Month 전환(대략): {mon}/{day} ({ratio}%)</div>;
                 })()}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {uploads && (
+          <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+            <CardHeader className="pb-2"><CardTitle className="text-lg">업로드 — 성공/실패</CardTitle></CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">성공(upload.success)</div>
+                  <Bar items={uploads.successes} prevMap={{}} />
+                </div>
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">실패(upload.fail)</div>
+                  <Bar items={uploads.fails} prevMap={{}} />
+                </div>
+              </div>
+              <div className="mt-3 text-xs opacity-80">총합: {(uploads.all||[]).reduce((a,b)=> a + (b.count||0), 0)}건</div>
+              {series?.uploads && (
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <div className="opacity-70 mb-1 text-xs">일별 추이</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {['success','fail','fail.too_large','fail.unsupported','fail.error'].filter(k => !!series?.uploads?.[k as any]).map(k => (
+                        <MiniSpark key={k} label={`upload.${k}`} series={series?.uploads?.[k as any] || []} days={series?.dayLabels || []} />
+                      ))}
+                    </div>
+                  </div>
+                  {series.hours?.upload && (
+                    <div>
+                      <div className="opacity-70 mb-1 text-xs">시간대(전체)</div>
+                      <HourHeat title="전체" arr={series.hours.upload} />
+                      {series.hoursByLabel?.upload && (
+                        <div className="mt-3">
+                          <div className="opacity-70 mb-1 text-xs">시간대(상위 라벨)</div>
+                          {Object.keys(series.uploads||{}).slice(0,3).map(k => (
+                            <div key={k} className="mb-2">
+                              <div className="text-[11px] opacity-70 mb-1">upload.{k}</div>
+                              <HourHeat title="" arr={(series.hoursByLabel.upload||{})[k] || Array(24).fill(0)} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {funnel && (
+          <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+            <CardHeader className="pb-2"><CardTitle className="text-lg">퍼널 — Upsell → Checkout (최근 {days}일)</CardTitle></CardHeader>
+            <CardContent className="text-sm space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">Upsell — Open Top</div>
+                  {funnel.upsell?.open?.slice(0,5).map((it,i)=> (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="truncate mr-2">{it.label}</span>
+                      <span className="opacity-70">{it.count}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">Upsell — Click Top</div>
+                  {funnel.upsell?.click?.slice(0,5).map((it,i)=> (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="truncate mr-2">{it.label}</span>
+                      <span className="opacity-70">{it.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">Checkout — Start vs Success</div>
+                  <div className="text-xs">start: <b>{funnel.checkout?.start||0}</b> / success: <b>{funnel.checkout?.success||0}</b> ({(funnel.checkout?.start||0)>0 ? Math.round((funnel.checkout.success/(funnel.checkout.start||1))*1000)/10 : 0}% )</div>
+                </div>
+                <div>
+                  <div className="opacity-70 mb-1 text-xs">Checkout — Success by Plan</div>
+                  {funnel.checkout?.successByPlan?.slice(0,5).map((it,i)=> (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="truncate mr-2">{it.label}</span>
+                      <span className="opacity-70">{it.count}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -550,6 +957,13 @@ export default function StatsPage() {
             )}
           </CardContent>
         </Card>
+        {/* 미커버 토큰 TOP(로컬) */}
+        <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
+          <CardHeader className="pb-2"><CardTitle className="text-lg">미커버 토큰 TOP(로컬)</CardTitle></CardHeader>
+          <CardContent>
+            <UnknownTop />
+          </CardContent>
+        </Card>
         <Card className="rounded-2xl border-zinc-200/60 dark:border-zinc-800/60">
           <CardHeader className="pb-2"><CardTitle className="text-lg">제안 TOP</CardTitle></CardHeader>
           <CardContent>
@@ -665,7 +1079,7 @@ export default function StatsPage() {
               <div className="mt-3 text-xs">
                 <div className="opacity-70 mb-1">사전 동의어 추가(로컬)</div>
                 <div className="flex items-center gap-2">
-                  <input value={alias} onChange={(e)=>setAlias(e.target.value)} placeholder="새 동의어(예: 언성 높아짐)" className="bg-transparent border rounded-md px-2 py-1 flex-1" />
+                  <input id="alias-input" value={alias} onChange={(e)=>setAlias(e.target.value)} placeholder="새 동의어(예: 언성 높아짐)" className="bg-transparent border rounded-md px-2 py-1 flex-1" />
                   <Button size="sm" variant="secondary" onClick={()=>{
                     try {
                       // find symbol key by label
@@ -690,7 +1104,16 @@ export default function StatsPage() {
                       const a = alias.trim(); if (!a) { setAliasMsg('동의어를 입력하세요.'); return; }
                       const r = await fetch('/api/admin/dict/aliases', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, alias: a }) });
                       if (!r.ok) { const j = await r.json().catch(()=>({})); setAliasMsg('서버 저장 실패: '+(j?.error||'오류')); return; }
-                      setAliasMsg('서버 사전 저장 완료. (팀 공유용)'); setAlias('');
+                      // 저장 성공 시 즉시 동기화하여 패턴 재컴파일
+                      try {
+                        await syncServerAliases();
+                        setAliasMsg('서버 사전 저장 + 동기화 완료. (즉시 반영됨)');
+                        // Toast if available
+                        try { (window as any).requestIdleCallback?.(()=>{}); } catch {}
+                      } catch {
+                        setAliasMsg('서버 사전 저장 완료. 동기화 실패 시 상단 버튼으로 재시도하세요.');
+                      }
+                      setAlias('');
                     } catch (e:any) { setAliasMsg('오류: '+(e?.message||e)); }
                   }}>서버 저장</Button>
                 </div>
@@ -700,6 +1123,41 @@ export default function StatsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- Unknown tokens (local) ----------
+function UnknownTop() {
+  const [items, setItems] = React.useState<Array<{ w: string; c: number }>>([]);
+  React.useEffect(()=>{
+    try {
+      const raw = localStorage.getItem('di.unknown.v1') || '{}';
+      const obj = JSON.parse(raw) as Record<string, number>;
+      const arr = Object.entries(obj).map(([w,c])=> ({ w, c: Number(c)||0 })).sort((a,b)=> b.c - a.c).slice(0, 30);
+      setItems(arr);
+    } catch { setItems([]); }
+  }, []);
+  function clearAll() {
+    if (!confirm('미커버 토큰 로컬 데이터를 모두 삭제할까요?')) return;
+    try { localStorage.removeItem('di.unknown.v1'); setItems([]); } catch {}
+  }
+  if (items.length === 0) return <div className="text-xs opacity-60">로컬 데이터 없음</div>;
+  const peak = Math.max(1, ...items.map(i=>i.c));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-end"><Button size="sm" variant="secondary" onClick={clearAll}>초기화</Button></div>
+      {items.map((it, idx) => (
+        <div key={idx} className="text-xs">
+          <div className="flex justify-between mb-1">
+            <span className="truncate mr-2">{it.w}</span>
+            <span className="opacity-60">{it.c}</span>
+          </div>
+          <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+            <div className="h-2 bg-zinc-500/70 dark:bg-zinc-300/70" style={{ width: `${Math.round((it.c/peak)*100)}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
