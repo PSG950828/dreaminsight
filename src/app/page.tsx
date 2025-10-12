@@ -664,6 +664,7 @@ export default function Page() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [debug, setDebug] = useState(false);
+  const [debugAvailable, setDebugAvailable] = useState(false);
   const [shareDropdownOpen, setShareDropdownOpen] = useState<string | null>(null);
 
   const [premiumOpen, setPremiumOpen] = useState(false);
@@ -777,6 +778,31 @@ export default function Page() {
   useEffect(()=>{
     try { localStorage.setItem("dream.autoAnalyze", autoAnalyze ? "1" : "0"); } catch {}
   }, [autoAnalyze]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const params = new URLSearchParams(location.search);
+      if (params.get("debug") === "1") {
+        localStorage.setItem("di.debug.allow", "1");
+        setDebugAvailable(true);
+      } else if (params.get("debug") === "0") {
+        localStorage.removeItem("di.debug.allow");
+        localStorage.removeItem("di.debug.state");
+        setDebugAvailable(false);
+        setDebug(false);
+      } else if (localStorage.getItem("di.debug.allow") === "1") {
+        setDebugAvailable(true);
+      }
+
+      if (localStorage.getItem("di.debug.allow") === "1" && localStorage.getItem("di.debug.state") === "1") {
+        setDebug(true);
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!debugAvailable) return;
+    try { localStorage.setItem("di.debug.state", debug ? "1" : "0"); } catch {}
+  }, [debug, debugAvailable]);
   
   // 공유 드롭다운 외부 클릭시 닫기
   useEffect(() => {
@@ -963,6 +989,11 @@ export default function Page() {
     setEditText("");
   }
 
+  function handleToggleDebug() {
+    if (!debugAvailable) return;
+    setDebug((v) => !v);
+  }
+
   const samples = [
     "검은 밤에 높은 건물에서 떨어졌는데 치아가 하나 부서졌어요. 파란 바다가 멀리 보였어요.",
     "누군가에게 쫓겨 골목을 도망쳤고, 마지막엔 날아올라 탈출했어요. 이상하게도 금색 빛이 돌았어요.",
@@ -990,9 +1021,11 @@ export default function Page() {
             <span className="text-sm opacity-70">{journals.length}</span>
             <Button variant="ghost" size="sm" onClick={()=>exportAllJournals(journals)}>백업</Button>
             <Button variant="ghost" size="sm" onClick={()=>importAllJournals(setJournals)}>복원</Button>
-            <Button variant="ghost" size="sm" onClick={()=>setDebug(v=>!v)} title="디버그 토글">
-              {debug ? "디버그: ON" : "디버그: OFF"}
-            </Button>
+            {debugAvailable && (
+              <Button variant="ghost" size="sm" onClick={handleToggleDebug} title="디버그 토글">
+                {debug ? "디버그: ON" : "디버그: OFF"}
+              </Button>
+            )}
           </div>
         </div>
 
