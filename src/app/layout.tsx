@@ -48,7 +48,7 @@ export default function RootLayout({
               </nav>
             </div>
             <div className="flex items-center gap-2 text-sm">
-              <Link href="/checkout" className="px-3 py-1.5 rounded-md border hover-elev">Plus</Link>
+              {/* Plus 버튼 제거 - 전체 무료 서비스 */}
             </div>
           </div>
         </div>

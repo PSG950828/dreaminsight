@@ -843,20 +843,8 @@ export default function Page() {
   }, [text]);
 
   function handleAnalyze() {
-    // Daily free quota gate (client-side) — Plus unlimited
-    try {
-      if (!isPlus) {
-        const key = 'di.quota.analyze.v1';
-        const raw = localStorage.getItem(key);
-        const day = new Date().toISOString().slice(0,10);
-        let obj: { day: string; c: number } = { day, c: 0 };
-        try { if (raw) obj = JSON.parse(raw); } catch {}
-        if (obj.day !== day) obj = { day, c: 0 };
-        const limit = parseInt(String(process.env.NEXT_PUBLIC_DAILY_QUOTA_ANALYZE || '3'), 10) || 3;
-        if (obj.c >= limit) { setPremiumOpen(true); return; }
-        obj.c += 1; localStorage.setItem(key, JSON.stringify(obj));
-      }
-    } catch {}
+    // 전체 무료화 - 할당량 제한 제거
+    // 사용자 증가를 위해 모든 기능 무료 제공
     const v = text.trim(); if (v.length < 6) return;
     const base = analyzeDream(v);
     const augmented = augmentResult({
@@ -972,15 +960,15 @@ export default function Page() {
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <Infinity className="w-4 h-4 text-emerald-600" />
-                <span>하루 <b>무료 3회</b> 이후 <b>무제한 해석</b></span>
+                <span><b>무제한 무료</b> 꿈 해석 서비스</span>
               </div>
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <FileText className="w-4 h-4 text-indigo-600" />
-                <span><b>PDF 저장</b> · <b>심층(GI/MDA)</b> · <b>서버 보관</b></span>
+                <span><b>200+ 심볼</b> · <b>맞춤 조언</b> · <b>감정 분석</b></span>
               </div>
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                <span>커뮤니티 <b>일일 한도 해제</b>(업로드/댓글/신고)</span>
+                <span><b>커뮤니티</b> · <b>백과사전</b> · <b>꿈일기</b></span>
               </div>
             </div>
           </div>
