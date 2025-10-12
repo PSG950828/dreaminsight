@@ -1,5 +1,7 @@
 // src/app/api/checkout/route.ts
 import { NextResponse } from "next/server";
+
+// 예전 결제 생성 로직은 archive/legacy_plus/api.checkout.route.md 참고
 import { getServiceSupabase } from "@/lib/supabaseServer";
 
 /**

@@ -2,6 +2,8 @@
 import React from "react";
 import Link from "next/link";
 
+// 구 플러스 성공 화면은 archive/legacy_plus/checkout.success.page.md 참고
+
 export default function SuccessPage() {
 
   return (

@@ -3,6 +3,8 @@ import React from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+// Legacy 플러스 관리 UI는 archive/legacy_plus/entitlements.page.md 참고
+
 export default function EntitlementsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-950 text-zinc-900 dark:text-zinc-50">
