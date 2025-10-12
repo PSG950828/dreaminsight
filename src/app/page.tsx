@@ -960,15 +960,15 @@ export default function Page() {
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <Infinity className="w-4 h-4 text-emerald-600" />
-                <span><b>무제한 무료</b> 꿈 해석 서비스</span>
+                <span><b>무제한 무료</b> 꿈 해석</span>
               </div>
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <FileText className="w-4 h-4 text-indigo-600" />
-                <span><b>200+ 심볼</b> · <b>맞춤 조언</b> · <b>감정 분석</b></span>
+                <span><b>AI 정밀분석</b> · <b>바로 실천 가능한 조언</b></span>
               </div>
               <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
                 <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                <span><b>커뮤니티</b> · <b>백과사전</b> · <b>꿈일기</b></span>
+                <span><b>꿈일기</b> · <b>커뮤니티</b> · <b>꿈백과</b></span>
               </div>
             </div>
           </div>
