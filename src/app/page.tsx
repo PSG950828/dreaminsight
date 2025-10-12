@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3, CheckCircle2, FileText, Infinity, Share2 } from "lucide-react";
+import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3, Share2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -667,35 +667,13 @@ export default function Page() {
   const [debugAvailable, setDebugAvailable] = useState(false);
   const [shareDropdownOpen, setShareDropdownOpen] = useState<string | null>(null);
 
-  const [premiumOpen, setPremiumOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [postOpen, setPostOpen] = useState(false);
   const [postBusy, setPostBusy] = useState(false);
   const [anonName, setAnonName] = useState<string>("");
   const [postPrivate, setPostPrivate] = useState<boolean>(false);
   const [lastPostId, setLastPostId] = useState<string | null>(null);
   const sbClient = getSupabase();
-  // Upsell A/B variant & payment link mapping
-  const [variant, setVariant] = useState<'A'|'B'>(()=>{
-    try { const v = localStorage.getItem('di.upsell.variant'); if (v==='A'||v==='B') return v; } catch {}
-    return Math.random() < 0.5 ? 'A' : 'B';
-  });
-  useEffect(()=>{ try { if (!localStorage.getItem('di.upsell.variant')) localStorage.setItem('di.upsell.variant', variant); } catch {} }, [variant]);
-  const paymentUrl = useMemo(()=>{
-    const A = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL_A || '';
-    const B = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL_B || '';
-    const F = (process as any).env?.NEXT_PUBLIC_PAYMENT_LINK_URL || '';
-    const pick = variant === 'A' ? (A || F) : (B || F);
-    return pick || '/checkout';
-  }, [variant]);
-  function trackUpsell(k: 'open'|'click.subscribe', ctx: string) {
-    try {
-      fetch('/api/telemetry', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'upsell', key: `${k}.${ctx}.${variant}`, delta: 1, user_uid: getDeviceUID?.() || 'client' })
-      }).catch(()=>{});
-    } catch {}
-  }
-  const [isPlus, setIsPlus] = useState(false);
   // 커뮤니티 로컬 모드 키/유틸(서버 미설정 시 사용)
   const COMM_PKEY = "di.comm.posts.v1";
   function genLocalId() { return `local_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`; }
@@ -748,11 +726,6 @@ export default function Page() {
         }
       }
     } catch {}
-    // Plus 플래그 로드
-    (async ()=>{
-      try { if (localStorage.getItem('dreaminsight.plus')==='1') setIsPlus(true); } catch {}
-      try { const r = await fetch('/api/me'); const j = await r.json(); if (j?.plus) setIsPlus(true); } catch {}
-    })();
   }, []);
   // 입력 임시저장 로드
   useEffect(()=>{
@@ -782,27 +755,11 @@ export default function Page() {
     if (typeof window === "undefined") return;
     try {
       const params = new URLSearchParams(location.search);
-      if (params.get("debug") === "1") {
-        localStorage.setItem("di.debug.allow", "1");
-        setDebugAvailable(true);
-      } else if (params.get("debug") === "0") {
-        localStorage.removeItem("di.debug.allow");
-        localStorage.removeItem("di.debug.state");
-        setDebugAvailable(false);
-        setDebug(false);
-      } else if (localStorage.getItem("di.debug.allow") === "1") {
-        setDebugAvailable(true);
-      }
-
-      if (localStorage.getItem("di.debug.allow") === "1" && localStorage.getItem("di.debug.state") === "1") {
-        setDebug(true);
-      }
+      const enabled = params.get("debug") === "1";
+      setDebugAvailable(enabled);
+      setDebug(enabled);
     } catch {}
   }, []);
-  useEffect(() => {
-    if (!debugAvailable) return;
-    try { localStorage.setItem("di.debug.state", debug ? "1" : "0"); } catch {}
-  }, [debug, debugAvailable]);
   
   // 공유 드롭다운 외부 클릭시 닫기
   useEffect(() => {
@@ -1029,32 +986,7 @@ export default function Page() {
           </div>
         </div>
 
-        {/* 혜택 배너 — 프리미엄 톤(글래스+엘리베이션) */}
-        <div className="mb-4 rounded-2xl border border-zinc-200/40 dark:border-zinc-800/50 overflow-hidden glass elev-1">
-          <div className="bg-gradient-to-r from-violet-100/60 to-blue-100/60 dark:from-violet-900/20 dark:to-blue-900/10 p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-violet-700 dark:text-violet-300" />
-                <div className="text-sm font-semibold">Plus 혜택</div>
-              </div>
-              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>{ window.open(paymentUrl, '_blank'); trackUpsell('click.subscribe','banner'); }}>지금 시작하기</Button>
-            </div>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
-                <Infinity className="w-4 h-4 text-emerald-600" />
-                <span><b>무제한 무료</b> 꿈 해석</span>
-              </div>
-              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
-                <FileText className="w-4 h-4 text-indigo-600" />
-                <span><b>AI 정밀분석</b> · <b>바로 실천 가능한 조언</b></span>
-              </div>
-              <div className="flex items-center gap-2 text-[12px] px-2 py-2 rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-white/70 dark:border-zinc-800/60">
-                <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                <span><b>꿈일기</b> · <b>커뮤니티</b> · <b>꿈백과</b></span>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* 안내 배너 제거: 완전 무료 전환 */}
 
         {/* 입력 카드 */}
         <Card className="rounded-2xl shadow-sm border-zinc-200/60 dark:border-zinc-800/60 mb-4">
@@ -1133,22 +1065,18 @@ export default function Page() {
                     </Button>
                   </div>
                     <div className="pt-2 flex justify-end">
-                      <Button size="sm" variant="default" onClick={()=>{ setPremiumOpen(true); trackUpsell('open','analyze'); }}>
+                      <Button size="sm" variant="default" onClick={()=> setReportOpen(true)}>
                         심층 리포트 보기
                       </Button>
                     </div>
-                    <Dialog open={premiumOpen} onOpenChange={(v)=>{ setPremiumOpen(v); if (v) trackUpsell('open','analyze'); }}>
+                    <Dialog open={reportOpen} onOpenChange={setReportOpen}>
                       <DialogContent>
                         <DialogHeader>
-                          <DialogTitle>프리미엄 리포트(미리보기)</DialogTitle>
+                          <DialogTitle>심층 리포트</DialogTitle>
                         </DialogHeader>
                         <div className="space-y-3 text-sm">
-                          {variant==='A' ? (
-                            <p className="opacity-80">요약 압축, 핵심 패턴, 실행 조언을 <b>PDF로 저장</b>하고 <b>무제한 해석</b>을 이용해 보세요.</p>
-                          ) : (
-                            <p className="opacity-80">오늘의 꿈을 <b>더 깊게</b>— GI/MDA 내러티브와 <b>실행 코칭</b>, <b>서버 보관</b>까지 한 번에.</p>
-                          )}
-                          {draftAnalysis && (
+                          <p className="opacity-80">요약, 핵심 패턴, 실행 조언을 한눈에 확인하고 PDF로 저장해 보세요.</p>
+                          {draftAnalysis ? (
                             <div className="space-y-2">
                               <div><b>요약:</b> {draftAnalysis.summary}</div>
                               <div><b>패턴:</b> {draftAnalysis.patterns.slice(0,3).join(", ") || "(패턴 미도출)"}</div>
@@ -1157,24 +1085,21 @@ export default function Page() {
                                   {draftAnalysis.advice.slice(0,3).map((a,i)=><li key={i}>{a}</li>)}
                                 </ul>
                               </div>
-                              {!isPlus && (
-                                <div className="pt-2">
-                                  <a onClick={()=> { trackUpsell('click.subscribe','analyze'); }} href={paymentUrl} target="_blank" className="inline-block px-3 py-2 rounded-md border bg-emerald-600 text-white text-xs">
-                                    {variant==='A' ? 'Plus ₩1,000/월 구독하기' : '지금 Plus 시작하기'}
-                                  </a>
-                                  <div className="text-[11px] opacity-70 mt-1">{variant==='A' ? '심층 리포트 · PDF 저장 · 서버 보관 · 무제한 해석' : 'GI/MDA 내러티브 · 실행 코칭 · 무제한 해석'}</div>
-                                </div>
-                              )}
                             </div>
+                          ) : (
+                            <p className="text-xs opacity-70">분석 결과가 준비되면 리포트를 확인할 수 있어요.</p>
                           )}
                         </div>
                         <DialogFooter>
-                          <Button onClick={()=>setPremiumOpen(false)} variant="secondary">닫기</Button>
-                          {isPlus ? (
-                            <Button onClick={()=> exportReportAsPDF(text, draftAnalysis)}>PDF로 내보내기</Button>
-                          ) : (
-                            <Button onClick={()=> { trackUpsell('click.subscribe','analyze'); window.open(paymentUrl, '_blank'); }}>{variant==='A' ? 'Plus ₩1,000/월' : 'Plus 구독하기'}</Button>
-                          )}
+                          <Button onClick={()=>setReportOpen(false)} variant="secondary">닫기</Button>
+                          <Button
+                            onClick={()=>{
+                              if (draftAnalysis) exportReportAsPDF(text, draftAnalysis);
+                            }}
+                            disabled={!draftAnalysis}
+                          >
+                            PDF로 내보내기
+                          </Button>
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
