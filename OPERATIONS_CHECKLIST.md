@@ -23,7 +23,7 @@
 
 ## Pre‑Deploy (Prod)
 - [ ] Staging 승인 / Change log 공유
-- [ ] 환경변수 차이 검토(Stripe/도메인 등)
+- [ ] ~~환경변수 차이 검토(Stripe/도메인 등)~~ **[서비스 무료화로 Stripe 관련 환경변수 불필요]**
 - [ ] 빠른 헬스 체크 동일 수행
 
 ## Post‑Deploy (D+0)
@@ -76,7 +76,8 @@
   - /stats에서 상위 텍스트/태그 패턴 점검 → 모더레이션 단어/정책 업데이트.
   - Abuse IP/ASN 차단(프록시/WAF). 필요 시 임시 국가 제한 검토.
 
-### 2) Stripe 웹훅 실패/지연 대응 (Plus 미적용)
+### 2) ~~Stripe 웹훅 실패/지연 대응 (Plus 미적용)~~ **[DEPRECATED - 서비스 무료 전환]**
+<!--
 - 증상
   - 결제 성공 후 `/api/me` 응답에서 `plus=false`, 혹은 적용 지연.
 - 진단
@@ -93,6 +94,7 @@
 - 예방
   - 체크아웃 시 `metadata.di_uid` 또는 `client_reference_id`에 `di_uid`가 반드시 포함되도록 점검.
   - 스테이징에서 Stripe CLI(또는 대시보드 테스트 이벤트)로 서명 검증/업서트 흐름 사전 검증.
+-->
 
 ### 3) 백업/복구 (DB/스토리지)
 - 확인
