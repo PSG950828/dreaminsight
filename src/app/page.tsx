@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3, CheckCircle2, FileText, Infinity } from "lucide-react";
+import { Download, History, Info, Sparkles, Trash2, Upload, Plus, Save, Edit3, CheckCircle2, FileText, Infinity, Share2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -37,6 +37,43 @@ type Analysis = {
   actionPlan?: Array<{ key: string; title: string; duration: number; script: string }>;
 };
 type Journal = { id: string; text: string; createdAt: number; analysis: Analysis };
+
+// ---------- 소셜 미디어 공유 함수들 ----------
+function createShareText(journal: Journal): string {
+  const summary = journal.analysis.summary.length > 100 
+    ? journal.analysis.summary.slice(0, 100) + "..." 
+    : journal.analysis.summary;
+  return `🌙 꿈해석 결과\n\n${summary}\n\n#꿈해석 #드림인사이트 #꿈분석`;
+}
+
+function shareToTwitter(journal: Journal) {
+  const text = createShareText(journal);
+  const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(location.origin)}`;
+  window.open(url, '_blank', 'width=600,height=400');
+}
+
+function shareToFacebook(journal: Journal) {
+  const text = createShareText(journal);
+  const url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(location.origin)}&quote=${encodeURIComponent(text)}`;
+  window.open(url, '_blank', 'width=600,height=400');
+}
+
+function shareToInstagram() {
+  // Instagram doesn't support direct URL sharing, so we copy text to clipboard
+  alert('인스타그램은 직접 공유가 지원되지 않습니다. 텍스트를 복사해서 인스타그램 스토리나 게시물에 붙여넣으세요.');
+}
+
+function shareToKakao(journal: Journal) {
+  const text = createShareText(journal);
+  const url = `https://story.kakao.com/share?url=${encodeURIComponent(location.origin)}&text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank', 'width=600,height=400');
+}
+
+function shareToLine(journal: Journal) {
+  const text = createShareText(journal);
+  const url = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(location.origin)}&text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank', 'width=600,height=400');
+}
 
 // ---------- 고정 사전(감정/색/행동) ----------
 const EMOTION_LEXICON: Record<string, string> = {
@@ -627,6 +664,7 @@ export default function Page() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [debug, setDebug] = useState(false);
+  const [shareDropdownOpen, setShareDropdownOpen] = useState<string | null>(null);
 
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [postOpen, setPostOpen] = useState(false);
@@ -739,6 +777,17 @@ export default function Page() {
   useEffect(()=>{
     try { localStorage.setItem("dream.autoAnalyze", autoAnalyze ? "1" : "0"); } catch {}
   }, [autoAnalyze]);
+  
+  // 공유 드롭다운 외부 클릭시 닫기
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setShareDropdownOpen(null);
+    };
+    if (shareDropdownOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [shareDropdownOpen]);
   useEffect(()=>{
     if (!autoAnalyze) return setDraftAnalysis(null);
     const v = text.trim(); if (v.length < 6) return setDraftAnalysis(null);
@@ -1240,6 +1289,67 @@ export default function Page() {
                         <Button variant="ghost" size="icon" onClick={()=>handleDelete(j.id)} title="삭제">
                           <Trash2 className="w-4 h-4" />
                         </Button>
+                        <div className="relative">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => setShareDropdownOpen(shareDropdownOpen === j.id ? null : j.id)}
+                            title="공유하기"
+                          >
+                            <Share2 className="w-4 h-4" />
+                          </Button>
+                          {shareDropdownOpen === j.id && (
+                            <div className="absolute right-0 top-full mt-1 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
+                              <button
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => {
+                                  shareToTwitter(j);
+                                  setShareDropdownOpen(null);
+                                }}
+                              >
+                                <span className="text-blue-500">𝕏</span> X (트위터)
+                              </button>
+                              <button
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => {
+                                  shareToFacebook(j);
+                                  setShareDropdownOpen(null);
+                                }}
+                              >
+                                <span className="text-blue-600">f</span> 페이스북
+                              </button>
+                              <button
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => {
+                                  shareToKakao(j);
+                                  setShareDropdownOpen(null);
+                                }}
+                              >
+                                <span className="text-yellow-500">💬</span> 카카오스토리
+                              </button>
+                              <button
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => {
+                                  shareToLine(j);
+                                  setShareDropdownOpen(null);
+                                }}
+                              >
+                                <span className="text-green-500">📱</span> 라인
+                              </button>
+                              <button
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => {
+                                  const text = createShareText(j);
+                                  navigator.clipboard.writeText(text);
+                                  alert('공유 텍스트가 복사되었습니다! 인스타그램이나 다른 앱에 붙여넣으세요.');
+                                  setShareDropdownOpen(null);
+                                }}
+                              >
+                                <span className="text-pink-500">📷</span> 텍스트 복사 (인스타그램용)
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </CardTitle>
                   </CardHeader>
